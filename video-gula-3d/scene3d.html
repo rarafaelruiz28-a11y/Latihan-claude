@@ -14,6 +14,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { loadNPC, twoBoneIK } from './npc_rig.js';
 
 const OFF = 0.8, V = s => s + OFF;
 const OW = 1080, OH = 1920;          // ukuran video
@@ -36,7 +37,7 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(50, RW / RH, 0.05, 400);
 const composer = new EffectComposer(renderer);
-composer.addPass(new RenderPass(scene, camera));
+const renderPass = new RenderPass(scene, camera); composer.addPass(renderPass);
 const bloom = new UnrealBloomPass(new THREE.Vector2(RW, RH), 0.6, 0.5, 0.82);
 composer.addPass(bloom); composer.addPass(new OutputPass());
 
@@ -348,45 +349,162 @@ function drawOverlay() {
     o.shadowColor = L.glow; o.shadowBlur = 30; o.fillStyle = L.color; o.fillText(L.text, 0, 0); o.restore();
   }
 }
-const npc = new Image(); npc.src = 'npc_boba.png';
-function drawNPC(t) {
-  // gambar 720x1280 -> layar 1080x1920; push-in pelan ke wajah, lalu zoom cepat ke lambung
-  const iw = npc.width, ih = npc.height, base = OW / iw;
-  const slow = ease(t / (T.s2 - 1.0));                 // dorong pelan
-  const dive = ease((t - (T.s2 - 1.0)) / 1.0);         // zoom cepat ke perut
-  const face = [300, 330], belly = [430, 860];
-  const fx = lerp(lerp(360, face[0], slow * 0.6), belly[0], dive), fy = lerp(lerp(640, face[1] + 200, slow * 0.6), belly[1], dive);
-  const z = lerp(1.0, 1.18, slow) * lerp(1, 4.2, dive);
-  const sway = Math.sin(t * 1.3) * 6, bob = Math.cos(t * 1.1) * 5;   // goyangan kamera handheld
-  o.save(); o.fillStyle = '#000'; o.fillRect(0, 0, OW, OH);
-  o.translate(OW / 2 + sway, OH / 2 + bob); o.scale(base * z, base * z); o.translate(-fx, -fy);
-  o.drawImage(npc, 0, 0); o.restore();
-  if (dive > 0) { o.fillStyle = `rgba(255,170,60,${0.5 * dive})`; o.fillRect(0, 0, OW, OH); }
+// ================= NPC 3D (karakter ber-rig + animasi) =================
+const npcScene = new THREE.Scene();
+const NPC = await loadNPC('models/');
+NPC.char.scale.setScalar(1); npcScene.add(NPC.char);
+const hemi = new THREE.HemisphereLight(0xffffff, 0x6a5a4a, 1.3); npcScene.add(hemi);
+const sun = new THREE.DirectionalLight(0xfff0dd, 2.6); sun.position.set(3, 6, 5); npcScene.add(sun);
+const npcRim = new THREE.PointLight(0x9fd8ff, 6, 10); npcRim.position.set(-2, 2.2, -1.5); npcScene.add(npcRim);
+const canvasTex = (w, h, draw, rep = [1, 1]) => { const c = document.createElement('canvas'); c.width = w; c.height = h; draw(c.getContext('2d'), w, h); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(...rep); return t; };
+// tanah: trotoar ubin
+const groundTex = canvasTex(256, 256, (g, w, h) => { g.fillStyle = '#b9b2a8'; g.fillRect(0, 0, w, h); g.strokeStyle = '#9d968c'; g.lineWidth = 6; for (let i = 0; i <= 2; i++) { g.beginPath(); g.moveTo(i * 128, 0); g.lineTo(i * 128, h); g.stroke(); g.beginPath(); g.moveTo(0, i * 128); g.lineTo(w, i * 128); g.stroke(); } seed = 9; for (let i = 0; i < 300; i++) { g.fillStyle = `rgba(0,0,0,${R(0.02, 0.06)})`; g.fillRect(R(0, w), R(0, h), 3, 3); } }, [30, 30]);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.MeshStandardMaterial({ map: groundTex, roughness: 0.9 })); ground.rotation.x = -Math.PI / 2; npcScene.add(ground);
+const grassMat = new THREE.MeshStandardMaterial({ color: 0x5cae4f, roughness: 1 });
+// kios boba
+const stall = new THREE.Group(); npcScene.add(stall);
+{
+  const counter = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.05, 0.8), new THREE.MeshStandardMaterial({ color: 0x35c4b5, roughness: 0.6 })); counter.position.y = 0.525; stall.add(counter);
+  const top = new THREE.Mesh(new THREE.BoxGeometry(2.3, 0.06, 0.9), new THREE.MeshStandardMaterial({ color: 0xf4efe6 })); top.position.y = 1.08; stall.add(top);
+  const signTex = canvasTex(512, 160, (g, w, h) => { g.fillStyle = '#ff5c8a'; g.fillRect(0, 0, w, h); g.fillStyle = '#fff'; g.font = '900 110px "Inter Display", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('BOBA', w / 2, h / 2 + 6); });
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.5), new THREE.MeshStandardMaterial({ map: signTex, emissive: 0x401020 })); sign.position.set(0, 0.6, 0.41); stall.add(sign);
+  const awnTex = canvasTex(256, 64, (g, w, h) => { for (let i = 0; i < 8; i++) { g.fillStyle = i % 2 ? '#ffffff' : '#ff4d6d'; g.fillRect(i * 32, 0, 32, h); } });
+  const awn = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.06, 0.9), new THREE.MeshStandardMaterial({ map: awnTex })); awn.position.set(0, 2.25, 0.15); awn.rotation.x = 0.25; stall.add(awn);
+  [-1.15, 1.15].forEach(x => { const p = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 2.2, 10), new THREE.MeshStandardMaterial({ color: 0xdddddd })); p.position.set(x, 1.1, 0.35); stall.add(p); });
+  seed = 3; for (let i = 0; i < 6; i++) { const c = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.045, 0.18, 16), new THREE.MeshStandardMaterial({ color: [0xc89466, 0xf2a7c1, 0x8fd18a][i % 3] })); c.position.set(-0.8 + i * 0.32, 1.2, 0.1); stall.add(c); }
+}
+stall.position.set(-1.2, 0, -1.6);
+// gedung latar
+const buildings = new THREE.Group(); npcScene.add(buildings);
+seed = 13; for (let i = 0; i < 9; i++) { const hgt = R(3, 7); const winTex = canvasTex(64, 128, (g, w, h) => { g.fillStyle = '#000'; g.fillRect(0, 0, w, h); for (let y = 8; y < h; y += 24) for (let x = 8; x < w; x += 20) { g.fillStyle = Math.random() < 0.6 ? '#ffe9a8' : '#334'; g.fillRect(x, y, 10, 14); } });
+  const b = new THREE.Mesh(new THREE.BoxGeometry(R(2, 3.5), hgt, 2), new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL(R(0, 1), 0.35, 0.65), emissiveMap: winTex, emissive: 0xffffff, emissiveIntensity: 0 })); b.position.set(-9 + i * 2.6, hgt / 2, -7 - R(0, 2)); buildings.add(b); }
+// pohon & lampu (dipakai juga untuk adegan berjalan/berlari: bergulir)
+const props = []; seed = 17;
+for (let i = 0; i < 10; i++) { const g = new THREE.Group();
+  if (i % 3 === 2) { const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 3, 8), new THREE.MeshStandardMaterial({ color: 0x444b55 })); pole.position.y = 1.5; g.add(pole); const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.16, 16, 12), new THREE.MeshStandardMaterial({ color: 0xfff3c0, emissive: 0xffd27a, emissiveIntensity: 0 })); lamp.position.y = 3.05; g.add(lamp); g.userData.lamp = lamp; }
+  else { const tr = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.14, 1.4, 10), new THREE.MeshStandardMaterial({ color: 0x7a5230 })); tr.position.y = 0.7; g.add(tr); for (let k = 0; k < 4; k++) { const f = new THREE.Mesh(new THREE.SphereGeometry(R(0.5, 0.75), 16, 12), grassMat); f.position.set(R(-0.4, 0.4), R(1.6, 2.2), R(-0.4, 0.4)); g.add(f); } }
+  g.userData.x0 = i * 2.4 - 12; g.userData.z = -2.2 - (i % 2) * 0.8; npcScene.add(g); props.push(g); }
+// gelas boba di tangan
+const npcCup = new THREE.Group(); npcScene.add(npcCup); npcCup.scale.setScalar(0.72);
+{ const c = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.042, 0.17, 24, 1, true), M.cup); npcCup.add(c);
+  const tea = new THREE.Mesh(new THREE.CylinderGeometry(0.051, 0.04, 0.15, 24), new THREE.MeshStandardMaterial({ color: 0xc08a5c, roughness: 0.4 })); tea.position.y = -0.008; npcCup.add(tea);
+  for (let i = 0; i < 10; i++) { const p = new THREE.Mesh(new THREE.SphereGeometry(0.011, 8, 6), M.pearl); p.position.set(Math.cos(i * 2.3) * 0.028, -0.065 + (i % 3) * 0.01, Math.sin(i * 2.3) * 0.028); npcCup.add(p); }
+  const lid = new THREE.Mesh(new THREE.SphereGeometry(0.056, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), M.cup); lid.position.y = 0.085; lid.scale.y = 0.35; npcCup.add(lid);
+  const st = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.22, 10), M.straw); st.position.set(0.01, 0.15, 0); st.rotation.z = -0.12; npcCup.add(st); }
+// botol air
+const npcBottle = new THREE.Group(); npcScene.add(npcBottle);
+{ const b = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.2, 24), M.water); npcBottle.add(b); const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.03, 12), new THREE.MeshStandardMaterial({ color: 0x1e88e5 })); cap.position.y = 0.115; npcBottle.add(cap); }
+// organ x-ray
+const xStomach = new THREE.Mesh(new THREE.SphereGeometry(0.11, 32, 24), new THREE.MeshStandardMaterial({ color: 0xff9a3c, emissive: 0xff6a00, emissiveIntensity: 0.55, transparent: true, opacity: 0.9 })); xStomach.scale.set(1.25, 0.8, 0.8); npcScene.add(xStomach);
+const xFat = new THREE.Mesh(new THREE.SphereGeometry(0.16, 32, 24), new THREE.MeshPhysicalMaterial({ color: 0xffd23f, emissive: 0x7a5200, emissiveIntensity: 0.8, transparent: true, opacity: 0.85, clearcoat: 1 })); npcScene.add(xFat);
+const belly = new THREE.Mesh(new THREE.SphereGeometry(0.15, 32, 24), new THREE.MeshStandardMaterial({ color: 0x4d4545, roughness: 0.5 })); npcScene.add(belly);
+const npcSugar = []; for (let i = 0; i < 14; i++) { const s = new THREE.Mesh(new RoundedBoxGeometry(0.03, 0.03, 0.03, 2, 0.005), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffe0a0, emissiveIntensity: 0.35 })); npcScene.add(s); npcSugar.push(s); }
+const litter = []; for (let i = 0; i < 14; i++) { const c = npcCup.clone(); c.scale.setScalar(1); npcScene.add(c); litter.push(c); }
+const npcMats = []; NPC.char.traverse(o => { if (o.isMesh) npcMats.push(o.material); });
+function setXray(x) { // 0 = normal, 1 = tembus pandang
+  for (const m of npcMats) { m.transparent = x > 0.01; m.opacity = lerp(1, 0.16, x); m.depthWrite = x < 0.5; if (m.emissive) { m.emissive.setRGB(0.03 * x, 0.16 * x, 0.24 * x); } }
+}
+const bw = n => NPC.bone(n).getWorldPosition(new THREE.Vector3());
+function armTo(side, target, w) { const S = side; const elbow = bw(S + 'ForeArm'); const pole = elbow.clone().add(new THREE.Vector3(side === 'Right' ? -0.3 : 0.3, -0.5, -0.2)); twoBoneIK(NPC.bone(S + 'Arm'), NPC.bone(S + 'ForeArm'), NPC.bone(S + 'Hand'), target, pole, w); }
+function holdProp(prop, side, tilt = 0) { const h = bw(side + 'Hand'); prop.visible = true; prop.position.copy(h).add(new THREE.Vector3(0, 0.02, 0.05)); prop.rotation.set(-tilt, 0, 0); }
+function hideAllNPCProps() { [npcCup, npcBottle, xStomach, xFat, belly].forEach(o => o.visible = false); npcSugar.forEach(s => s.visible = false); litter.forEach(c => c.visible = false); }
+function setWorld(kind) { // 'street' | 'park'
+  stall.visible = kind === 'street'; buildings.visible = true;
+}
+function skyCol(c) { npcScene.background = c; npcScene.fog = new THREE.Fog(c.getHex(), 8, 22); }
+function scrollProps(t, speed) { props.forEach(p => { const x = ((p.userData.x0 - t * speed) % 24 + 24) % 24 - 12; p.position.set(x, 0, p.userData.z); }); groundTex.offset.x = t * speed / 2; }
+
+// ---- adegan NPC ----
+function npcHook(t) { // 0..T.s2 : minum boba -> x-ray -> gula ke lambung
+  hideAllNPCProps(); setWorld('street'); setXray(0); skyCol(new THREE.Color(0x9fd3f2)); hemi.intensity = 1.3; sun.intensity = 2.6;
+  buildings.children.forEach(b => b.material.emissiveIntensity = 0); props.forEach(p => p.userData.lamp && (p.userData.lamp.material.emissiveIntensity = 0)); scrollProps(0, 0);
+  NPC.char.position.set(0, 0, 0); NPC.char.rotation.y = 0;
+  NPC.pose({ idle: 1 }, t + 1);
+  const head = bw('Head'); const mouth = head.clone().add(new THREE.Vector3(-0.03, -0.11, 0.17));
+  const rest = bw('RightHand').add(new THREE.Vector3(0.02, 0.15, 0.18));
+  const lift = ease((t - 1.0) / 1.3) * (1 - ease((t - 4.1) / 0.8) * 0.15);
+  const target = rest.clone().lerp(mouth, lift).add(new THREE.Vector3(0, 0, Math.sin(Math.PI * lift) * 0.15));
+  armTo('Right', target, 1);
+  const sip = clamp((t - 2.3) / 0.3) * (1 - clamp((t - 3.6) / 0.4));
+  NPC.bone('Head').rotateX(-0.12 * sip); NPC.bone('Head').updateMatrixWorld(true);
+  holdProp(npcCup, 'Right', lift * 0.15);
+  const xr = ease((t - 3.3) / 0.6); setXray(xr);
+  const spine = bw('Spine1'); xStomach.visible = xr > 0; xStomach.position.copy(spine).add(new THREE.Vector3(0.03, -0.03, 0.07)); xStomach.material.opacity = 0.9 * xr;
+  npcSugar.forEach((s, i) => { const p = clamp((t - 3.5 - i * 0.07) / 0.9); s.visible = xr > 0.3 && p > 0 && p < 1; s.position.lerpVectors(mouth.clone().add(new THREE.Vector3(0, -0.05, -0.08)), xStomach.position, ease(p)); s.rotation.set(t * 3 + i, t * 2, 0); });
+  // kamera: lebar -> medium close-up -> menembus ke lambung
+  const push = ease(t / 3.4), dive = ease((t - 4.3) / 1.25);
+  const camA = new THREE.Vector3(0.9, 1.25, 3.0), camB = new THREE.Vector3(0.35, 1.45, 1.05), camC = xStomach.position.clone().add(new THREE.Vector3(0.02, 0.02, 0.12));
+  const lookA = new THREE.Vector3(0, 1.1, 0), lookB = head.clone().add(new THREE.Vector3(0, -0.12, 0)), lookC = xStomach.position;
+  const cp = camA.clone().lerp(camB, push).lerp(camC, dive), lp = lookA.clone().lerp(lookB, push).lerp(lookC, dive);
+  camera.position.copy(cp).add(new THREE.Vector3(Math.sin(t * 1.3) * 0.01, Math.cos(t * 1.1) * 0.01, 0)); camera.lookAt(lp); camera.fov = 40; camera.updateProjectionMatrix();
+  npcRim.color.set(0x9fd8ff); bloom.strength = 0.22 + 0.2 * xr;
+}
+function npcFat(t) { // NPC x-ray, lemak tumbuh di perut
+  hideAllNPCProps(); setWorld('street'); skyCol(new THREE.Color(0x0e1a2a)); hemi.intensity = 0.6; sun.intensity = 1.0;
+  NPC.char.position.set(0, 0, 0); NPC.char.rotation.y = 0.6; NPC.pose({ idle: 0.4, sad_pose: 0.6 }, t);
+  setXray(1);
+  const lt = t - V(25.0), grow = ease(lt / 2.4);
+  const spine = bw('Spine'); xFat.visible = true; xFat.position.copy(bw('Hips')).add(new THREE.Vector3(0, 0.12, 0.07).applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.6)); xFat.scale.set(lerp(0.3, 0.8, grow), lerp(0.3, 0.65, grow), lerp(0.3, 0.85, grow));
+  const pulse = 0.5 + 0.5 * Math.sin(t * 5); xFat.material.emissiveIntensity = 0.35 + 0.25 * pulse;
+  camera.position.set(1.4 - lt * 0.12, 1.15, 1.7 - lt * 0.15); camera.lookAt(spine); camera.fov = 40; camera.updateProjectionMatrix();
+  npcRim.color.set(0xffc24d); bloom.strength = 0.6;
+}
+function npcYears(t) { // berjalan lesu, siang-malam berganti cepat (bertahun-tahun)
+  hideAllNPCProps(); setWorld('street'); stall.visible = false; setXray(0);
+  const lt = t - T.s5, cyc = (Math.sin(lt * 3.2 - 1.2) + 1) / 2; // 0 malam .. 1 siang
+  skyCol(new THREE.Color().lerpColors(new THREE.Color(0x0b1430), new THREE.Color(0xa9d6f5), cyc)); hemi.intensity = lerp(0.35, 1.3, cyc); sun.intensity = lerp(0.2, 2.4, cyc);
+  buildings.children.forEach(b => b.material.emissiveIntensity = (1 - cyc) * 0.9); props.forEach(p => p.userData.lamp && (p.userData.lamp.material.emissiveIntensity = (1 - cyc) * 2));
+  NPC.char.position.set(0, 0, 0); NPC.char.rotation.y = Math.PI / 2; NPC.pose({ walk: 1 - 0.3 * ease(lt / 3), sad_pose: 0.3 * ease(lt / 3) }, t * 0.85);
+  scrollProps(t, 0.9);
+  const spine = bw('Spine'); belly.visible = true; belly.position.copy(spine).add(new THREE.Vector3(0.07, 0.0, 0)); const bs = lerp(0.6, 1.1, ease(lt / 3)); belly.scale.set(bs, bs * 0.9, bs);
+  litter.forEach((c, i) => { c.visible = i < 3 + lt * 4; seed = 200 + i; const x = ((R(-12, 12) - t * 0.9) % 24 + 24) % 24 - 12; c.position.set(x, 0.05, R(-0.6, 0.6)); c.rotation.set(Math.PI / 2, 0, R(0, 6)); });
+  camera.position.set(0.6, 1.15, 2.6); camera.lookAt(0.1, 0.95, 0); camera.fov = 40; camera.updateProjectionMatrix();
+  npcRim.color.set(0xaab8ff); bloom.strength = 0.35;
+}
+function npcHealthy(t) { // air putih -> jogging -> mengangguk
+  hideAllNPCProps(); setWorld('park'); stall.visible = false; setXray(0); skyCol(new THREE.Color(0x8fd3ff)); hemi.intensity = 1.4; sun.intensity = 2.8;
+  buildings.children.forEach(b => b.material.emissiveIntensity = 0); props.forEach(p => p.userData.lamp && (p.userData.lamp.material.emissiveIntensity = 0));
+  const t1 = V(49.4), t2 = V(52.1);
+  if (t < t1) { // minum air putih
+    NPC.char.position.set(0, 0, 0); NPC.char.rotation.y = 0; NPC.pose({ idle: 1 }, t); scrollProps(0, 0);
+    const lt = t - T.s6; const head = bw('Head'), mouth = head.clone().add(new THREE.Vector3(-0.03, -0.06, 0.15));
+    const rest = bw('RightHand').add(new THREE.Vector3(0.02, 0.15, 0.18)); const lift = ease((t - V(47.6)) / 0.8) * (1 - ease((t - (t1 - 0.5)) / 0.5));
+    armTo('Right', rest.clone().lerp(mouth, lift).add(new THREE.Vector3(0, 0, Math.sin(Math.PI * lift) * 0.15)), 1);
+    NPC.bone('Head').rotateX(-0.25 * lift); NPC.bone('Head').updateMatrixWorld(true); holdProp(npcBottle, 'Right', lift * 1.2);
+    camera.position.set(0.5, 1.4, 1.6 - lt * 0.08); camera.lookAt(0, 1.3, 0);
+  } else if (t < t2) { // jogging
+    const lt = t - t1; NPC.char.position.set(0, 0, 0); NPC.char.rotation.y = Math.PI / 2; NPC.pose({ run: 1 }, t); scrollProps(t, 3.2);
+    camera.position.set(0.9 + Math.sin(lt) * 0.2, 1.0, 2.3); camera.lookAt(0.2, 0.9, 0);
+  } else { // mengangguk senang ke kamera
+    const lt = t - t2; NPC.char.position.set(0, 0, 0); NPC.char.rotation.y = 0; NPC.pose({ agree: 0.8, idle: 0.2 }, lt + 0.2); scrollProps(0, 0);
+    camera.position.set(0.2, 1.42, lerp(1.9, 1.3, ease(lt / 3))); camera.lookAt(0, 1.38, 0);
+  }
+  camera.fov = 40; camera.updateProjectionMatrix(); npcRim.color.set(0xffffff); bloom.strength = 0.2;
 }
 function render(t) {
   overlay = [];
-  if (t < T.s2) { drawNPC(t); }
-  else {
-  if (t < T.s3) sceneStomach(t);
-  else if (t < T.s4) sceneInsulin(t);
-  else if (t < T.s5) sceneFat(t);
-  else if (t < T.s6) sceneDiabetes(t);
-  else sceneHealthy(t);
-  scene.updateMatrixWorld(true);
+  let useNPC = true;
+  if (t < T.s2) npcHook(t);
+  else if (t < T.s3) { useNPC = false; sceneStomach(t); }
+  else if (t < T.s4) { useNPC = false; sceneInsulin(t); }
+  else if (t < T.s5) { if (t >= V(25.0)) npcFat(t); else { useNPC = false; sceneFat(t); } }
+  else if (t < T.s6) { if (t < V(31.35)) npcYears(t); else { useNPC = false; sceneDiabetes(t); } }
+  else npcHealthy(t);
+  renderPass.scene = useNPC ? npcScene : scene;
+  (useNPC ? npcScene : scene).updateMatrixWorld(true);
   composer.render();
   o.drawImage(renderer.domElement, 0, 0, OW, OH);
-  }
   // vignette sinematik
   const vg = o.createRadialGradient(OW / 2, OH / 2, OH * 0.3, OW / 2, OH / 2, OH * 0.75);
   vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.55)'); o.fillStyle = vg; o.fillRect(0, 0, OW, OH);
   captions(t);
   // transisi kilat putih di setiap potongan adegan
-  for (const c of [T.s2, T.s3, T.s4, T.s5, V(35.3), T.s6]) { const d = Math.abs(t - c); if (d < 0.18) { o.fillStyle = `rgba(255,255,255,${0.85 * (1 - d / 0.18)})`; o.fillRect(0, 0, OW, OH); } }
+  for (const c of [T.s2, T.s3, T.s4, V(25.0), T.s5, V(31.35), V(35.3), T.s6]) { const d = Math.abs(t - c); if (d < 0.18) { o.fillStyle = `rgba(255,255,255,${0.85 * (1 - d / 0.18)})`; o.fillRect(0, 0, OW, OH); } }
   if (t < 0.3) { o.fillStyle = `rgba(0,0,0,${1 - t / 0.3})`; o.fillRect(0, 0, OW, OH); }
   if (t > T.end - 1.2) { o.fillStyle = `rgba(0,0,0,${clamp((t - (T.end - 1.2)) / 1.2)})`; o.fillRect(0, 0, OW, OH); }
 }
 window.frame = (t, q) => { render(t); return out.toDataURL('image/jpeg', q || 0.9); };
-await document.fonts.load('900 80px "Inter Display"'); await document.fonts.load('700 80px "Inter Display"'); await npc.decode();
+await document.fonts.load('900 80px "Inter Display"'); await document.fonts.load('700 80px "Inter Display"');
 window.ready = true;
 </script>
 </body></html>
