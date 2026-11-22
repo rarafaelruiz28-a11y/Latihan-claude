@@ -1,0 +1,433 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>html,body{margin:0;background:#000}canvas{display:block}</style>
+<script src="captions.js"></script>
+</head><body>
+<canvas id="c" width="1920" height="1080"></canvas>
+<script>
+// Waktu dalam detik VIDEO. Voiceover mulai di detik 3.0 -> V(x) = x + 3.
+const W = 1920, H = 1080, OFF = 3.0;
+const V = s => s + OFF;
+const c = document.getElementById('c'), g = c.getContext('2d');
+const FONT = '"Inter Display", "Inter", sans-serif';
+const EMOJI = '"Noto Color Emoji"';
+const C = {
+  bg1: '#fff7ec', bg2: '#ffe9d6', ink: '#23203a', sub: '#5d5a78',
+  sugar: '#ffffff', sugarEdge: '#d9d3e8', glucose: '#ffb703', blood: '#e63946', bloodDark: '#b81f2e',
+  cell: '#8ecae6', cellEdge: '#3a86b4', door: '#f4a261', key: '#ffc300', fat: '#ffd166', fatEdge: '#e9a93a',
+  green: '#2a9d8f', red: '#e63946', purple: '#7b5cff', teal: '#06d6a0', water: '#4cc9f0'
+};
+
+// ---------- utilitas ----------
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const easeOut = t => 1 - Math.pow(1 - clamp(t), 3);
+const easeInOut = t => { t = clamp(t); return t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; };
+const popIn = (t, t0, d = 0.45) => {
+  const x = clamp((t - t0) / d); if (x <= 0) return 0;
+  const s = 2.2; return 1 + (s + 1) * Math.pow(x - 1, 3) + s * Math.pow(x - 1, 2);
+};
+const fadeIn = (t, t0, d = 0.4) => clamp((t - t0) / d);
+let seed = 11; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+
+function roundRect(x, y, w, h, r) {
+  g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
+}
+function bg(top = C.bg1, bot = C.bg2) {
+  const gr = g.createLinearGradient(0, 0, 0, H); gr.addColorStop(0, top); gr.addColorStop(1, bot);
+  g.fillStyle = gr; g.fillRect(0, 0, W, H);
+  // pola titik halus
+  g.fillStyle = 'rgba(35,32,58,0.045)';
+  for (let y = 30; y < H; y += 60) for (let x = (y / 60 % 2) * 30 + 30; x < W; x += 60) { g.beginPath(); g.arc(x, y, 3, 0, 7); g.fill(); }
+}
+function text(str, x, y, size, color = C.ink, align = 'center', weight = 800, alpha = 1, scale = 1, outline = null) {
+  if (alpha <= 0 || scale <= 0) return;
+  g.save(); g.globalAlpha = alpha; g.translate(x, y); g.scale(scale, scale);
+  g.font = `${weight} ${size}px ${FONT}`; g.textAlign = align; g.textBaseline = 'middle';
+  if (outline) { g.lineJoin = 'round'; g.lineWidth = size * 0.18; g.strokeStyle = outline; g.strokeText(str, 0, 0); }
+  g.fillStyle = color; g.fillText(str, 0, 0); g.restore();
+}
+function emoji(ch, x, y, size, alpha = 1, scale = 1, rot = 0) {
+  if (alpha <= 0 || scale <= 0) return;
+  g.save(); g.globalAlpha = alpha; g.translate(x, y); g.rotate(rot); g.scale(scale, scale);
+  g.fillStyle = '#000'; g.font = `${size}px ${EMOJI}`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(ch, 0, size * 0.05); g.restore();
+}
+function pill(str, x, y, size, bgc, fg = '#fff', alpha = 1, scale = 1) {
+  if (alpha <= 0 || scale <= 0) return;
+  g.save(); g.globalAlpha = alpha; g.translate(x, y); g.scale(scale, scale);
+  g.font = `800 ${size}px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+  const w = g.measureText(str).width + size * 1.2, h = size * 1.7;
+  g.fillStyle = 'rgba(0,0,0,0.12)'; roundRect(-w / 2, -h / 2 + 6, w, h, h / 2); g.fill();
+  g.fillStyle = bgc; roundRect(-w / 2, -h / 2, w, h, h / 2); g.fill();
+  g.fillStyle = fg; g.fillText(str, 0, 2); g.restore();
+}
+function card(x, y, w, h, fill = '#fff', alpha = 1, scale = 1) {
+  g.save(); g.globalAlpha = alpha; g.translate(x, y); g.scale(scale, scale);
+  g.fillStyle = 'rgba(35,32,58,0.10)'; roundRect(-w / 2, -h / 2 + 10, w, h, 36); g.fill();
+  g.fillStyle = fill; roundRect(-w / 2, -h / 2, w, h, 36); g.fill(); g.restore();
+}
+function sugarCube(x, y, s = 1, rot = 0, alpha = 1) {
+  g.save(); g.globalAlpha = alpha; g.translate(x, y); g.rotate(rot); g.scale(s, s);
+  g.fillStyle = C.sugar; g.strokeStyle = C.sugarEdge; g.lineWidth = 4;
+  roundRect(-30, -30, 60, 60, 10); g.fill(); g.stroke();
+  g.fillStyle = 'rgba(200,190,225,0.6)';
+  for (const [a, b] of [[-12, -10], [8, -14], [-4, 6], [14, 10], [-16, 14]]) { g.beginPath(); g.arc(a, b, 3, 0, 7); g.fill(); }
+  g.restore();
+}
+function arrow(x1, y1, x2, y2, color, w = 10, alpha = 1, prog = 1) {
+  if (alpha <= 0 || prog <= 0) return;
+  x2 = lerp(x1, x2, prog); y2 = lerp(y1, y2, prog);
+  g.save(); g.globalAlpha = alpha; g.strokeStyle = color; g.fillStyle = color; g.lineWidth = w; g.lineCap = 'round';
+  g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke();
+  const a = Math.atan2(y2 - y1, x2 - x1), h = w * 3;
+  g.beginPath(); g.moveTo(x2 + Math.cos(a) * h * 0.5, y2 + Math.sin(a) * h * 0.5);
+  g.lineTo(x2 - Math.cos(a - 0.55) * h, y2 - Math.sin(a - 0.55) * h);
+  g.lineTo(x2 - Math.cos(a + 0.55) * h, y2 - Math.sin(a + 0.55) * h); g.closePath(); g.fill(); g.restore();
+}
+
+// tokoh sederhana; lebar badan bisa membesar (obesitas)
+function person(x, y, wide = 0, alpha = 1, mood = 'happy') {
+  g.save(); g.globalAlpha = alpha; g.translate(x, y);
+  const bw = 150 + wide * 170;
+  g.fillStyle = '#5e60ce'; roundRect(-bw / 2, -40, bw, 260, Math.min(bw / 2, 110)); g.fill(); // badan
+  g.fillStyle = '#3a3c8f'; g.fillRect(-bw / 2 + 25, 200, 45, 110); g.fillRect(bw / 2 - 70, 200, 45, 110); // kaki
+  g.fillStyle = '#f2c094'; g.beginPath(); g.arc(0, -110, 75 + wide * 18, 0, 7); g.fill(); // kepala
+  g.fillStyle = '#2b2118'; g.beginPath(); g.arc(0, -135 - wide * 6, 75 + wide * 18, Math.PI * 1.05, Math.PI * 1.95); g.fill();
+  g.fillStyle = C.ink; g.beginPath(); g.arc(-25, -108, 7, 0, 7); g.arc(25, -108, 7, 0, 7); g.fill();
+  g.strokeStyle = C.ink; g.lineWidth = 6; g.lineCap = 'round'; g.beginPath();
+  if (mood === 'happy') g.arc(0, -88, 22, 0.2, Math.PI - 0.2); else if (mood === 'sad') g.arc(0, -62, 20, Math.PI + 0.4, -0.4); else { g.moveTo(-16, -78); g.lineTo(16, -78); }
+  g.stroke(); g.restore();
+}
+
+// sel dengan pintu
+function cellDoor(x, y, r, open, alpha = 1, rusty = false) {
+  g.save(); g.globalAlpha = alpha; g.translate(x, y);
+  g.fillStyle = C.cell; g.strokeStyle = C.cellEdge; g.lineWidth = 10;
+  g.beginPath(); g.arc(0, 0, r, 0, 7); g.fill(); g.stroke();
+  g.fillStyle = 'rgba(58,134,180,0.35)'; g.beginPath(); g.arc(r * 0.25, -r * 0.2, r * 0.28, 0, 7); g.fill(); // inti
+  // pintu di sisi kiri
+  const dw = 80, dh = 130, dx = -r + 4;
+  g.fillStyle = '#5a3e2b'; roundRect(dx - 6, -dh / 2 - 6, dw + 12, dh + 12, 14); g.fill();
+  g.save(); g.translate(dx, 0);
+  g.scale(lerp(1, 0.18, clamp(open)), 1);
+  g.fillStyle = rusty ? '#9c6b4e' : C.door; roundRect(0, -dh / 2, dw, dh, 10); g.fill();
+  g.fillStyle = '#6d4c33'; g.beginPath(); g.arc(dw - 18, 0, 8, 0, 7); g.fill(); // gagang/lubang kunci
+  if (rusty) { g.fillStyle = 'rgba(120,70,40,0.6)'; for (const [a, b] of [[15, -40], [40, 25], [22, 45], [55, -20]]) { g.beginPath(); g.arc(a, b, 9, 0, 7); g.fill(); } }
+  g.restore();
+  g.restore();
+}
+function key(x, y, s = 1, rot = 0, alpha = 1) {
+  if (alpha <= 0) return;
+  g.save(); g.globalAlpha = alpha; g.translate(x, y); g.rotate(rot); g.scale(s, s);
+  g.fillStyle = C.key; g.strokeStyle = '#c99700'; g.lineWidth = 5;
+  g.beginPath(); g.arc(-60, 0, 32, 0, 7); g.fill(); g.stroke();
+  g.fillStyle = '#fff3c4'; g.beginPath(); g.arc(-60, 0, 12, 0, 7); g.fill();
+  g.fillStyle = C.key; roundRect(-32, -11, 100, 22, 8); g.fill(); g.stroke();
+  g.fillRect(40, 8, 12, 22); g.fillRect(58, 8, 10, 16);
+  g.restore();
+}
+// pembuluh darah horizontal dengan glukosa yang mengalir
+function vessel(t, y, density, alpha = 1, x0 = 0, x1 = W) {
+  g.save(); g.globalAlpha = alpha;
+  g.fillStyle = C.bloodDark; roundRect(x0, y - 95, x1 - x0, 190, 95); g.fill();
+  g.fillStyle = C.blood; roundRect(x0, y - 80, x1 - x0, 160, 80); g.fill();
+  g.save(); roundRect(x0, y - 80, x1 - x0, 160, 80); g.clip();
+  // sel darah merah
+  for (let i = 0; i < 14; i++) {
+    const xx = ((i * 157 + t * 160) % (x1 - x0 + 200)) + x0 - 100, yy = y + Math.sin(i * 2.3) * 45;
+    g.fillStyle = '#ff6b6b'; g.beginPath(); g.ellipse(xx, yy, 30, 20, 0.3, 0, 7); g.fill();
+    g.fillStyle = '#d62839'; g.beginPath(); g.ellipse(xx, yy, 12, 7, 0.3, 0, 7); g.fill();
+  }
+  // glukosa (bintik kuning)
+  const n = Math.round(density);
+  for (let i = 0; i < n; i++) {
+    const sp = 120 + (i % 5) * 25;
+    const xx = ((i * 97.3 + t * sp) % (x1 - x0 + 100)) + x0 - 50, yy = y + Math.sin(i * 1.7 + t) * 55;
+    glucoseDot(xx, yy, 1);
+  }
+  g.restore(); g.restore();
+}
+function glucoseDot(x, y, s = 1, alpha = 1) {
+  g.save(); g.globalAlpha = alpha; g.translate(x, y); g.scale(s, s);
+  g.fillStyle = C.glucose; g.strokeStyle = '#e07a00'; g.lineWidth = 3;
+  g.beginPath(); for (let k = 0; k < 6; k++) { const a = k * Math.PI / 3; g.lineTo(Math.cos(a) * 15, Math.sin(a) * 15); } g.closePath(); g.fill(); g.stroke();
+  g.restore();
+}
+
+// ---------- adegan ----------
+function sceneTitle(t) {
+  bg('#ffe5ec', '#ffd6a5');
+  for (let i = 0; i < 14; i++) {
+    seed = 7919 * (i + 3); rnd(); rnd(); const x = rnd() * W, sp = 180 + rnd() * 200, r0 = rnd() * 6;
+    const y = ((t * sp + rnd() * 1200) % 1300) - 120;
+    sugarCube(x, y, 0.8 + rnd() * 0.6, r0 + t * (rnd() - 0.5) * 2, 0.9);
+  }
+  const s = popIn(t, 0.2, 0.6);
+  card(W / 2, 430, 1320, 360, '#ffffff', 0.95, s);
+  text('Gula, Obesitas', W / 2, 360, 120, C.ink, 'center', 900, 1, s);
+  text('& Diabetes', W / 2, 490, 120, C.red, 'center', 900, 1, s);
+  pill('Apa hubungannya? Bagaimana mencegahnya?', W / 2, 700, 44, C.purple, '#fff', fadeIn(t, 0.9), popIn(t, 0.9));
+}
+
+function sceneHook(t) {
+  bg();
+  const items = [['🥤', 'Es teh manis', V(0.08), 480], ['🧋', 'Minuman boba', V(1.76), 960], ['🍰', 'Kue', V(3.04), 1440]];
+  const move = easeInOut((t - V(5.3)) / 0.9); // item mengecil & naik saat pertanyaan muncul
+  for (const [e, name, t0, x] of items) {
+    const s = popIn(t, t0) * lerp(1, 0.55, move);
+    const y = lerp(380, 190, move);
+    emoji(e, x, y, 230, 1, s, Math.sin(t * 2 + x) * 0.05);
+    text(name, x, y + lerp(170, 100, move), 52, C.ink, 'center', 800, fadeIn(t, t0 + 0.2) * (1 - move));
+  }
+  pill('Enak, kan? 😋', W / 2, 720, 56, C.green, '#fff', fadeIn(t, V(4.2)) * (1 - move), popIn(t, V(4.2)));
+  // tubuh + pertanyaan
+  const a = fadeIn(t, V(5.6), 0.5);
+  if (a > 0) {
+    person(W / 2, 540, 0, a, 'neutral');
+    // kubus gula terbang ke tubuh saat "gula?"
+    for (let i = 0; i < 6; i++) {
+      const p = clamp((t - V(8.6) - i * 0.12) / 0.9);
+      if (p <= 0 || p >= 1) continue;
+      const sx = i % 2 ? 300 : 1620, sy = 300 + i * 60;
+      sugarCube(lerp(sx, W / 2, easeInOut(p)), lerp(sy, 600, easeInOut(p)) - Math.sin(p * Math.PI) * 120, 0.9, p * 6, 1 - p * 0.3);
+    }
+    emoji('❓', W / 2 + 250, 330, 150, a, popIn(t, V(6.1)), Math.sin(t * 3) * 0.1);
+    pill('Apa yang terjadi di dalam tubuh?', W / 2, 120, 50, C.purple, '#fff', a, popIn(t, V(5.6)));
+  }
+}
+
+function sceneInsulin(t) {
+  bg('#eef7ff', '#dff1ff');
+  // 1. gula -> glukosa
+  const a1 = fadeIn(t, V(10.1));
+  const shrink = easeInOut((t - V(15.5)) / 0.8); // panel atas mengecil saat masuk darah
+  const topY = lerp(300, 160, shrink), sc = lerp(1, 0.6, shrink);
+  sugarCube(lerp(560, 760, shrink), topY, 2.2 * sc, 0, a1);
+  arrow(lerp(700, 830, shrink), topY, lerp(1000, 1000, shrink), topY, C.sub, 12 * sc, fadeIn(t, V(12.0)), easeOut((t - V(12.0)) / 0.6));
+  const gA = fadeIn(t, V(13.0));
+  for (let i = 0; i < 5; i++) glucoseDot(lerp(1180, 1130, shrink) + (i % 3) * 60 * sc, topY - 40 * sc + Math.floor(i / 3) * 70 * sc, 1.6 * sc * popIn(t, V(13.0) + i * 0.08), gA);
+  pill('Glukosa = sumber energi ⚡', lerp(1200, 1500, shrink), topY + lerp(150, 0, shrink), 44 * lerp(1, 0.85, shrink), C.glucose, C.ink, fadeIn(t, V(14.4)));
+  // 2. pembuluh darah
+  const vA = fadeIn(t, V(15.5), 0.6);
+  if (vA > 0) {
+    vessel(t, 560, 10 * vA, vA, 0, 1250);
+    pill('Darah 🩸', 200, 420, 40, C.red, '#fff', vA);
+  }
+  // 3. sel + kunci insulin
+  const cA = fadeIn(t, V(18.3), 0.6);
+  if (cA > 0) {
+    const open = easeInOut((t - V(24.0)) / 0.6);
+    cellDoor(1560, 600, 230, open, cA);
+    pill('Sel tubuh', 1560, 320, 40, C.cellEdge, '#fff', cA);
+    // kunci terbang ke pintu
+    const kp = easeInOut((t - V(22.9)) / 1.0);
+    const kx = lerp(1000, 1270, kp), ky = lerp(380, 600, kp);
+    key(kx, ky, 1.1, lerp(-0.4, 0, kp) + (kp >= 1 ? Math.min(1, (t - V(23.9)) * 3) * 0.9 : 0), fadeIn(t, V(19.1)));
+    pill('Insulin = kunci 🔑', 1000, 280, 44, C.key, C.ink, fadeIn(t, V(19.1)), popIn(t, V(19.1)));
+    // glukosa masuk ke sel setelah pintu terbuka
+    if (open > 0) {
+      for (let i = 0; i < 8; i++) {
+        const p = clamp((t - V(24.3) - i * 0.18) / 1.0);
+        if (p <= 0) continue;
+        const x = lerp(1200, 1560 + Math.cos(i * 1.3) * 90, easeInOut(p)), y = lerp(560 + (i % 3 - 1) * 40, 600 + Math.sin(i * 1.3) * 90, easeInOut(p));
+        glucoseDot(x, y, 1.1);
+      }
+    }
+  }
+}
+
+function sceneObesity(t) {
+  bg('#fff8e7', '#ffefc9');
+  // timbangan energi
+  const a = fadeIn(t, V(25.3));
+  const tilt = easeInOut((t - V(27.6)) / 0.8) * 0.16; // kiri lebih berat
+  const shift = easeInOut((t - V(32.4)) / 0.9);       // timbangan bergeser ke kiri, tubuh muncul
+  g.save(); g.globalAlpha = a; g.translate(lerp(W / 2, 560, shift), 0); g.scale(lerp(1, 0.75, shift), lerp(1, 0.75, shift));
+  g.fillStyle = '#8d99ae'; g.beginPath(); g.moveTo(0, 340); g.lineTo(-60, 760); g.lineTo(60, 760); g.closePath(); g.fill();
+  g.fillRect(-140, 750, 280, 30);
+  g.save(); g.translate(0, 340); g.rotate(-tilt);
+  g.fillStyle = '#5c677d'; roundRect(-520, -14, 1040, 28, 14); g.fill();
+  // piring kiri: gula masuk
+  const plate = (x, label, color, items) => {
+    g.strokeStyle = '#5c677d'; g.lineWidth = 6; g.beginPath(); g.moveTo(x, 0); g.lineTo(x - 110, 170); g.moveTo(x, 0); g.lineTo(x + 110, 170); g.stroke();
+    g.fillStyle = color; roundRect(x - 160, 165, 320, 30, 15); g.fill();
+    items(x);
+    text(label, x, 260, 46, C.ink, 'center', 800);
+  };
+  plate(-430, 'Gula masuk', C.glucose, x => { for (let i = 0; i < 7; i++) sugarCube(x - 105 + (i % 4) * 70, 130 - Math.floor(i / 4) * 62, 1, 0, popIn(t, V(26.7) + i * 0.1)); });
+  plate(430, 'Energi dipakai', C.teal, x => { emoji('🏃', x, 110, 110, 1); });
+  g.restore();
+  g.restore();
+  // sisa -> lemak
+  const fA = fadeIn(t, V(30.8));
+  if (fA > 0) {
+    const fx = lerp(W / 2, 560, shift), fy = lerp(900, 880, shift);
+    pill('Sisa gula → disimpan jadi LEMAK', lerp(W / 2, 560, shift), lerp(160, 150, shift), 46, C.fatEdge, '#fff', fA, popIn(t, V(30.8)));
+  }
+  // tubuh yang makin lebar
+  if (shift > 0) {
+    const wide = easeInOut((t - V(33.0)) / 3.5);
+    person(1380, 560, wide, shift, wide > 0.6 ? 'neutral' : 'happy');
+    // sel lemak menumpuk
+    for (let i = 0; i < 10; i++) {
+      const s = popIn(t, V(33.4) + i * 0.25);
+      if (s <= 0) continue;
+      const bw = 150 + wide * 170, fx = 1380 + ((i % 5) / 4 - 0.5) * (bw - 70), fy = 600 + Math.floor(i / 5) * 90 + (i % 2) * 20;
+      g.fillStyle = C.fat; g.strokeStyle = C.fatEdge; g.lineWidth = 4;
+      g.beginPath(); g.arc(fx, fy, 26 * s, 0, 7); g.fill(); g.stroke();
+    }
+    const o = popIn(t, V(37.5), 0.5);
+    pill('OBESITAS', 1700, 330, 70, C.red, '#fff', clamp(o), o);
+  }
+}
+
+function sceneDiabetes(t) {
+  bg('#fff0f0', '#ffe0e3');
+  const a = fadeIn(t, V(38.7));
+  // sel dengan pintu "berkarat" (kebal insulin)
+  const sh = easeInOut((t - V(49.9)) / 0.8); // bergeser saat organ muncul
+  g.save(); g.translate(lerp(0, -420, sh), lerp(0, 100, sh)); g.scale(lerp(1, 0.75, sh), lerp(1, 0.75, sh));
+  const dense = 6 + easeInOut((t - V(46.9)) / 3) * 34;
+  vessel(t, 560, dense, a, 0, 1200);
+  cellDoor(1450, 560, 230, 0, a, t > V(41.0));
+  pill('Sel kebal insulin', 1450, 830, 40, C.cellEdge, '#fff', fadeIn(t, V(42.3)));
+  // kunci mencoba dan gagal (bergetar)
+  const kA = fadeIn(t, V(43.0));
+  const shake = t > V(43.9) && t < V(45.6) ? Math.sin(t * 60) * 0.12 : 0;
+  key(1155, 560, 1.1, shake, kA);
+  const xS = popIn(t, V(44.4));
+  if (xS > 0) {
+    g.save(); g.translate(1230, 560); g.scale(xS, xS); g.strokeStyle = C.red; g.lineWidth = 22; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(-60, -60); g.lineTo(60, 60); g.moveTo(60, -60); g.lineTo(-60, 60); g.stroke(); g.restore();
+  }
+  g.restore();
+  pill('Gula menumpuk di darah!', lerp(600, 520, sh), lerp(330, 300, sh), 48, C.red, '#fff', fadeIn(t, V(47.9)), popIn(t, V(47.9)));
+  // diabetes + organ
+  const dS = popIn(t, V(50.9), 0.5) * (sh >= 0.99 ? 1 : 0);
+  if (dS > 0) {
+    card(1500, 520, 660, 640, '#ffffff', clamp(dS), dS);
+    text('DIABETES', 1500, 290, 84, C.red, 'center', 900, 1, dS);
+    text('TIPE 2', 1500, 380, 64, C.ink, 'center', 900, 1, dS);
+    text('bisa merusak:', 1500, 470, 40, C.sub, 'center', 700, fadeIn(t, V(52.6)));
+    [['🫀', 'Jantung', V(53.2), 1310], ['🫘', 'Ginjal', V(54.1), 1500], ['👁️', 'Mata', V(54.8), 1690]].forEach(([e, n, t0, x]) => {
+      emoji(e, x, 600, 120, 1, popIn(t, t0));
+      text(n, x, 710, 40, C.ink, 'center', 800, fadeIn(t, t0 + 0.1));
+    });
+  }
+}
+
+function sceneTips(t) {
+  bg('#ecfff6', '#d8fbe9');
+  text('Cara Mencegahnya', W / 2, 110, 86, C.green, 'center', 900, 1, popIn(t, V(55.8), 0.5));
+  const tips = [
+    [V(58.4), '💧', 'Ganti minuman manis', 'dengan air putih'],
+    [V(66.2), '🏷️', 'Baca label gizi', 'cek kadar gulanya'],
+    [V(69.0), '🥦', 'Perbanyak sayur', '& buah utuh 🍎'],
+    [V(71.9), '🏃', 'Aktif bergerak', '60 menit setiap hari'],
+  ];
+  const xs = [300, 740, 1180, 1620];
+  // tip 1 mendapat sorotan "7 sendok teh" sebelum kartu lain muncul
+  const spot = fadeIn(t, V(61.6), 0.4) * (1 - fadeIn(t, V(66.0), 0.4));
+  tips.forEach(([t0, e, l1, l2], i) => {
+    const s = popIn(t, t0);
+    if (s <= 0) return;
+    const dim = i === 0 ? 1 : 1;
+    card(xs[i], 520, 400, 560, '#ffffff', dim, s);
+    g.save(); g.globalAlpha = 1;
+    pill(String(i + 1), xs[i] - 150, 270, 40, C.green, '#fff', 1, s);
+    g.restore();
+    emoji(e, xs[i], 440, 160, 1, s);
+    text(l1, xs[i], 600, 40, C.ink, 'center', 900, 1, s);
+    text(l2, xs[i], 655, 34, C.sub, 'center', 700, 1, s);
+    // centang
+    const ck = popIn(t, t0 + 0.6);
+    if (ck > 0) emoji('✅', xs[i], 745, 70, 1, ck);
+  });
+  if (spot > 0) {
+    g.fillStyle = `rgba(20,30,40,${0.55 * spot})`; g.fillRect(0, 0, W, H);
+    card(W / 2, 500, 1300, 520, '#ffffff', spot, lerp(0.9, 1, spot));
+    g.save(); g.globalAlpha = spot;
+    emoji('🥤', 520, 500, 220, spot);
+    text('=', 720, 500, 120, C.ink, 'center', 900, spot);
+    text('1 botol minuman manis', 1170, 330, 48, C.ink, 'center', 800, spot);
+    for (let i = 0; i < 7; i++) {
+      const s = popIn(t, V(64.6) + i * 0.13);
+      emoji('🥄', 860 + (i % 4) * 150, 470 + Math.floor(i / 4) * 140, 110, spot, s);
+      if (s > 0) sugarCube(860 + (i % 4) * 150 - 24, 470 + Math.floor(i / 4) * 140 - 30, 0.42 * s, 0.3, spot);
+    }
+    pill('lebih dari 7 sendok teh gula!', 1170, 700, 48, C.red, '#fff', spot * fadeIn(t, V(65.0)));
+    g.restore();
+  }
+}
+
+function sceneOutro(t) {
+  bg('#ffe5ec', '#ffd6a5');
+  const s1 = popIn(t, V(75.9), 0.5);
+  card(W / 2, 330, 1360, 300, '#ffffff', clamp(s1), s1);
+  text('Gula boleh,', W / 2, 280, 96, C.ink, 'center', 900, 1, s1);
+  text('asal tidak berlebihan! 😊', W / 2, 390, 78, C.green, 'center', 900, fadeIn(t, V(77.6)), popIn(t, V(77.6)));
+  const icons = ['💧', '🏷️', '🥦', '🏃'];
+  icons.forEach((e, i) => emoji(e, 660 + i * 200, 640, 110, 1, popIn(t, V(78.6) + i * 0.15)));
+  const sj = popIn(t, V(79.2), 0.5);
+  pill('Sampai jumpa! 👋', W / 2, 810, 60, C.purple, '#fff', clamp(sj), sj);
+  const fo = clamp((t - 88.4) / 1.6);
+  if (fo > 0) { g.fillStyle = `rgba(0,0,0,${fo})`; g.fillRect(0, 0, W, H); }
+}
+
+// ---------- subtitle (semua narasi), kata aktif disorot ----------
+function captions(t) {
+  const cap = (window.CAPTIONS || []).find(cp => t >= cp.start - 0.05 && t < cp.end);
+  if (!cap) return;
+  const size = 50, lh = 66, maxW = 1500;
+  g.font = `800 ${size}px ${FONT}`;
+  // bagi kata menjadi maks. 2 baris seimbang
+  const ws = cap.words, full = ws.map(w => w.t).join(' ');
+  let lines = [ws];
+  if (g.measureText(full).width > maxW * 0.62) {
+    let best = 1, bestDiff = 1e9;
+    for (let k = 1; k < ws.length; k++) {
+      const a = g.measureText(ws.slice(0, k).map(w => w.t).join(' ')).width, b = g.measureText(ws.slice(k).map(w => w.t).join(' ')).width;
+      if (Math.abs(a - b) < bestDiff) { bestDiff = Math.abs(a - b); best = k; }
+    }
+    lines = [ws.slice(0, best), ws.slice(best)];
+  }
+  const sp = g.measureText(' ').width;
+  const widths = lines.map(l => l.reduce((s, w) => s + g.measureText(w.t).width, 0) + sp * (l.length - 1));
+  const boxW = Math.max(...widths) + 70, boxH = lines.length * lh + 34;
+  const by = H - 40 - boxH;
+  const a = clamp((t - cap.start + 0.05) / 0.15);
+  g.save(); g.globalAlpha = a;
+  g.fillStyle = 'rgba(20,18,40,0.82)'; roundRect(W / 2 - boxW / 2, by, boxW, boxH, 26); g.fill();
+  g.textBaseline = 'middle'; g.textAlign = 'left';
+  lines.forEach((l, li) => {
+    let x = W / 2 - widths[li] / 2; const y = by + 17 + lh * li + lh / 2;
+    for (const w of l) {
+      const active = t >= w.s - 0.03 && t < w.e + 0.08, done = t >= w.e + 0.08;
+      g.fillStyle = active ? '#ffd23f' : done ? '#ffffff' : 'rgba(255,255,255,0.72)';
+      g.fillText(w.t, x, y);
+      x += g.measureText(w.t).width + sp;
+    }
+  });
+  g.restore();
+}
+
+// ---------- render utama ----------
+const CUTS = [V(0), V(10.05), V(25.3), V(38.6), V(55.6), V(75.88)];
+function draw(t) {
+  g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1;
+  if (t < CUTS[0]) sceneTitle(t);
+  else if (t < CUTS[1]) sceneHook(t);
+  else if (t < CUTS[2]) sceneInsulin(t);
+  else if (t < CUTS[3]) sceneObesity(t);
+  else if (t < CUTS[4]) sceneDiabetes(t);
+  else if (t < CUTS[5]) sceneTips(t);
+  else sceneOutro(t);
+  // transisi: kilasan terang singkat
+  for (const cT of CUTS) { const d = Math.abs(t - cT); if (d < 0.22) { g.fillStyle = `rgba(255,255,255,${1 - d / 0.22})`; g.fillRect(0, 0, W, H); } }
+  captions(t);
+  if (t < 0.4) { g.fillStyle = `rgba(0,0,0,${1 - t / 0.4})`; g.fillRect(0, 0, W, H); }
+}
+window.frame = (t, q) => { draw(t); return c.toDataURL('image/jpeg', q || 0.92); };
+</script>
+</body></html>
