@@ -9,14 +9,14 @@ const path = require('path');
   const args = process.argv.slice(2);
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
-  await page.goto('file://' + path.join(__dirname, 'anim.html'));
+  await page.goto('file://' + path.join(__dirname, 'anim.html') + (process.env.THEME ? '#' + process.env.THEME : ''));
   await page.evaluate(() => document.fonts.ready);
 
   if (args[0] === '--stills') {
     fs.mkdirSync(path.join(__dirname, 'stills'), { recursive: true });
     for (const t of args[1].split(',').map(Number)) {
       const url = await page.evaluate(t => window.frame(t, 0.85), t);
-      fs.writeFileSync(path.join(__dirname, 'stills', `t${t}.jpg`), Buffer.from(url.split(',')[1], 'base64'));
+      fs.writeFileSync(path.join(__dirname, 'stills', `${process.env.THEME || 'pastel'}_t${t}.jpg`), Buffer.from(url.split(',')[1], 'base64'));
     }
     await browser.close(); return;
   }

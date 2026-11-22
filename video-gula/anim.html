@@ -18,6 +18,11 @@ const C = {
   green: '#2a9d8f', red: '#e63946', purple: '#7b5cff', teal: '#06d6a0', water: '#4cc9f0'
 };
 
+// ---------- tema ----------
+const THEME = (location.hash || '#pastel').slice(1);
+if (THEME === 'neon') Object.assign(C, { ink: '#f1f0ff', sub: '#a9a6d6', glucose: '#ffd60a', red: '#ff3d7f', green: '#00f5a0', purple: '#b14dff', cellEdge: '#00b4ff', key: '#ffd60a', teal: '#00f5d4' });
+if (THEME === 'kapur') Object.assign(C, { ink: '#f4f1e8', sub: '#cfd8c9', red: '#ff8a80', green: '#a5e887', purple: '#9fa8ff', cellEdge: '#6ab7d9', glucose: '#ffe066' });
+
 // ---------- utilitas ----------
 const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -35,6 +40,23 @@ function roundRect(x, y, w, h, r) {
   g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
 }
 function bg(top = C.bg1, bot = C.bg2) {
+  if (THEME === 'neon') {
+    const gr = g.createRadialGradient(W / 2, H * 0.4, 100, W / 2, H * 0.4, 1300);
+    gr.addColorStop(0, '#1d1650'); gr.addColorStop(1, '#07061a'); g.fillStyle = gr; g.fillRect(0, 0, W, H);
+    g.strokeStyle = 'rgba(177,77,255,0.13)'; g.lineWidth = 2;
+    for (let x = 0; x <= W; x += 80) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke(); }
+    for (let y = 0; y <= H; y += 80) { g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
+    return;
+  }
+  if (THEME === 'kapur') {
+    const gr = g.createLinearGradient(0, 0, W, H); gr.addColorStop(0, '#2f4f3a'); gr.addColorStop(1, '#22392b');
+    g.fillStyle = gr; g.fillRect(0, 0, W, H);
+    seed = 4242; g.fillStyle = 'rgba(255,255,255,0.035)';
+    for (let i = 0; i < 90; i++) { g.beginPath(); g.ellipse(rnd() * W, rnd() * H, 60 + rnd() * 220, 18 + rnd() * 50, rnd() * 3, 0, 7); g.fill(); }
+    g.strokeStyle = '#8a5a35'; g.lineWidth = 26; g.strokeRect(13, 13, W - 26, H - 26);
+    g.strokeStyle = '#6b4226'; g.lineWidth = 6; g.strokeRect(26, 26, W - 52, H - 52);
+    return;
+  }
   const gr = g.createLinearGradient(0, 0, 0, H); gr.addColorStop(0, top); gr.addColorStop(1, bot);
   g.fillStyle = gr; g.fillRect(0, 0, W, H);
   // pola titik halus
@@ -45,6 +67,8 @@ function text(str, x, y, size, color = C.ink, align = 'center', weight = 800, al
   if (alpha <= 0 || scale <= 0) return;
   g.save(); g.globalAlpha = alpha; g.translate(x, y); g.scale(scale, scale);
   g.font = `${weight} ${size}px ${FONT}`; g.textAlign = align; g.textBaseline = 'middle';
+  if (THEME === 'neon') { g.shadowColor = color; g.shadowBlur = size * 0.35; }
+  if (THEME === 'kapur') { g.shadowColor = 'rgba(255,255,255,0.35)'; g.shadowBlur = 6; }
   if (outline) { g.lineJoin = 'round'; g.lineWidth = size * 0.18; g.strokeStyle = outline; g.strokeText(str, 0, 0); }
   g.fillStyle = color; g.fillText(str, 0, 0); g.restore();
 }
@@ -58,12 +82,22 @@ function pill(str, x, y, size, bgc, fg = '#fff', alpha = 1, scale = 1) {
   g.save(); g.globalAlpha = alpha; g.translate(x, y); g.scale(scale, scale);
   g.font = `800 ${size}px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
   const w = g.measureText(str).width + size * 1.2, h = size * 1.7;
+  if (THEME === 'neon') {
+    g.shadowColor = bgc; g.shadowBlur = 28; g.fillStyle = 'rgba(10,8,30,0.85)'; roundRect(-w / 2, -h / 2, w, h, h / 2); g.fill();
+    g.lineWidth = 4; g.strokeStyle = bgc; g.stroke(); g.fillStyle = bgc === C.key || bgc === C.glucose ? bgc : '#ffffff'; g.fillText(str, 0, 2); g.restore(); return;
+  }
+  if (THEME === 'kapur') {
+    g.strokeStyle = bgc; g.lineWidth = 5; g.setLineDash([18, 6]); roundRect(-w / 2, -h / 2, w, h, h / 2); g.stroke(); g.setLineDash([]);
+    g.fillStyle = bgc; g.shadowColor = 'rgba(255,255,255,0.3)'; g.shadowBlur = 6; g.fillText(str, 0, 2); g.restore(); return;
+  }
   g.fillStyle = 'rgba(0,0,0,0.12)'; roundRect(-w / 2, -h / 2 + 6, w, h, h / 2); g.fill();
   g.fillStyle = bgc; roundRect(-w / 2, -h / 2, w, h, h / 2); g.fill();
   g.fillStyle = fg; g.fillText(str, 0, 2); g.restore();
 }
 function card(x, y, w, h, fill = '#fff', alpha = 1, scale = 1) {
   g.save(); g.globalAlpha = alpha; g.translate(x, y); g.scale(scale, scale);
+  if (THEME === 'neon') { g.shadowColor = '#b14dff'; g.shadowBlur = 40; g.fillStyle = 'rgba(22,18,60,0.92)'; roundRect(-w / 2, -h / 2, w, h, 36); g.fill(); g.lineWidth = 4; g.strokeStyle = '#b14dff'; g.stroke(); g.restore(); return; }
+  if (THEME === 'kapur') { g.fillStyle = 'rgba(255,255,255,0.06)'; roundRect(-w / 2, -h / 2, w, h, 30); g.fill(); g.strokeStyle = 'rgba(244,241,232,0.85)'; g.lineWidth = 5; g.setLineDash([26, 8, 4, 8]); g.stroke(); g.setLineDash([]); g.restore(); return; }
   g.fillStyle = 'rgba(35,32,58,0.10)'; roundRect(-w / 2, -h / 2 + 10, w, h, 36); g.fill();
   g.fillStyle = fill; roundRect(-w / 2, -h / 2, w, h, 36); g.fill(); g.restore();
 }
@@ -398,7 +432,8 @@ function captions(t) {
   const by = H - 40 - boxH;
   const a = clamp((t - cap.start + 0.05) / 0.15);
   g.save(); g.globalAlpha = a;
-  g.fillStyle = 'rgba(20,18,40,0.82)'; roundRect(W / 2 - boxW / 2, by, boxW, boxH, 26); g.fill();
+  g.fillStyle = THEME === 'kapur' ? 'rgba(15,28,20,0.78)' : 'rgba(20,18,40,0.82)'; roundRect(W / 2 - boxW / 2, by, boxW, boxH, 26); g.fill();
+  if (THEME === 'neon') { g.strokeStyle = '#b14dff'; g.lineWidth = 3; g.stroke(); }
   g.textBaseline = 'middle'; g.textAlign = 'left';
   lines.forEach((l, li) => {
     let x = W / 2 - widths[li] / 2; const y = by + 17 + lh * li + lh / 2;
