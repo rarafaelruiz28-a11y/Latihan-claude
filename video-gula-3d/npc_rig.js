@@ -56,3 +56,26 @@ export async function loadNPC(base = 'models/') {
   }
   return { char, mesh, bone, pose, clips };
 }
+
+// Karakter "koko": Quaternius Casual_Male (CC0), diwarnai ulang. Nama tulang dipetakan ke gaya Mixamo
+// supaya kode adegan bisa memakai NPC.bone('RightArm') dll. untuk kedua karakter.
+export async function loadKoko(base = 'models/quaternius/') {
+  const L = new GLTFLoader();
+  const g = await L.loadAsync(base + 'Casual_Male.glb');
+  const char = new THREE.Group(); const inner = g.scene; char.add(inner);
+  inner.scale.setScalar(1.72 / 3.27); // tinggi ~1,72 m
+  const COLORS = { Skin: 0xf3cda8, Hair: 0x111111, Shirt: 0xf4f4f2, Pants: 0x24324a, Belt: 0x2a2a2a };
+  inner.traverse(o => { if (o.isMesh) { o.frustumCulled = false; const ms = (Array.isArray(o.material) ? o.material : [o.material]).map(m => { const c = m.clone(); if (COLORS[m.name] !== undefined) c.color.set(COLORS[m.name]); return c; }); o.material = Array.isArray(o.material) ? ms : ms[0]; } });
+  const MAP = { RightArm: 'UpperArmR', RightForeArm: 'LowerArmR', RightHand: 'FistR', LeftArm: 'UpperArmL', LeftForeArm: 'LowerArmL', LeftHand: 'FistL',
+    Head: 'Head', Neck: 'Neck', Spine: 'Abdomen', Spine1: 'Torso', Spine2: 'Torso', Hips: 'Hips', LeftToeBase: 'FootL', RightToeBase: 'FootR' };
+  const byName = {}; inner.traverse(o => { if (o.isBone) byName[o.name] = o; });
+  const bone = n => byName[MAP[n] || n];
+  const CLIP = { idle: 'Idle', walk: 'Walk', run: 'Run', sad_pose: 'Defeat', agree: 'Victory' };
+  const mixer = new THREE.AnimationMixer(inner); const actions = {}, clips = {};
+  for (const k in CLIP) { const c = g.animations.find(a => a.name === CLIP[k]); clips[k] = c; actions[k] = mixer.clipAction(c); actions[k].play(); actions[k].setEffectiveWeight(0); }
+  function pose(weights, time) {
+    for (const k in actions) { const w = weights[k] || 0; actions[k].setEffectiveWeight(w); const d = clips[k].duration; actions[k].time = k === 'sad_pose' ? Math.min(time, d * 0.55) % d : time % d; }
+    mixer.update(0); char.updateMatrixWorld(true);
+  }
+  return { char, bone, pose, clips };
+}

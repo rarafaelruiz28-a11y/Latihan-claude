@@ -1,5 +1,5 @@
 # Campur voiceover (Vidi) + efek suara ElevenLabs ke video Shorts 3D. Waktu dalam detik video (VO mulai 0.8).
-import subprocess
+import subprocess, sys
 OFF, DUR = 0.8, 58
 cues = {
   'sip':     ([0.9], 0.55),
@@ -23,4 +23,4 @@ for idx, (name, (times, vol)) in enumerate(cues.items(), start=3):
 f.append(''.join(labels) + f"amix=inputs={len(labels)}:normalize=0:duration=longest,atrim=0:{DUR},loudnorm=I=-14:TP=-1.5:LRA=11[aout]")
 subprocess.run(['ffmpeg', '-y', '-loglevel', 'error'] + inputs + ['-filter_complex', ';'.join(f), '-map', '0:v', '-map', '[aout]',
                 '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-t', str(DUR), '-movflags', '+faststart',
-                'gula_3d_shorts_9x16.mp4'], check=True)
+                (sys.argv[1] if len(sys.argv) > 1 else 'gula_3d_shorts_9x16.mp4')], check=True)

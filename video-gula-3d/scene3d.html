@@ -14,7 +14,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { loadNPC, twoBoneIK } from './npc_rig.js';
+import { loadNPC, loadKoko, twoBoneIK } from './npc_rig.js';
 
 const OFF = 0.8, V = s => s + OFF;
 const OW = 1080, OH = 1920;          // ukuran video
@@ -351,8 +351,18 @@ function drawOverlay() {
 }
 // ================= NPC 3D (karakter ber-rig + animasi) =================
 const npcScene = new THREE.Scene();
-const NPC = await loadNPC('models/');
-NPC.char.scale.setScalar(1); npcScene.add(NPC.char);
+// pilih karakter lewat hash URL: #michelle (default lama) atau #koko
+const CHAR = (location.hash || '#koko').slice(1);
+const NPC = CHAR === 'michelle' ? await loadNPC('models/') : await loadKoko();
+if (CHAR === 'michelle') NPC.char.scale.setScalar(1); npcScene.add(NPC.char);
+const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
+const CFG = CHAR === 'michelle' ? {
+  bobaMouth: V3(-0.03, -0.11, 0.17), waterMouth: V3(-0.03, -0.06, 0.15), stomach: ['Spine1', V3(0.03, -0.03, 0.07)], fat: V3(0, 0.12, 0.07), belly: V3(0.07, 0, 0),
+  hookB: V3(0.35, 1.45, 1.05), hookLook: -0.12, fatCam: [V3(1.4, 1.15, 1.7), 1], walkCam: [V3(0.6, 1.15, 2.6), V3(0.1, 0.95, 0)], drinkCam: [V3(0.5, 1.4, 1.6), V3(0, 1.3, 0)],
+  runCam: [V3(0.9, 1.0, 2.3), V3(0.2, 0.9, 0)], endCam: [V3(0.2, 1.42, 1.9), V3(0.2, 1.42, 1.3), V3(0, 1.38, 0)], headTilt: 1 } : {
+  bobaMouth: V3(-0.03, -0.13, 0.43), waterMouth: V3(-0.03, -0.06, 0.42), stomach: ['Spine', V3(0, 0.02, 0.13)], fat: V3(0, 0.2, 0.1), belly: V3(0.15, 0.0, 0), bellyColor: 0xf4f4f2,
+  hookB: V3(0.5, 1.3, 1.95), hookLook: 0.05, fatCam: [V3(1.15, 1.05, 1.55), 1], walkCam: [V3(0.7, 1.05, 3.1), V3(0.1, 0.95, 0)], drinkCam: [V3(0.6, 1.3, 2.4), V3(0, 1.2, 0)],
+  runCam: [V3(1.0, 1.0, 2.8), V3(0.2, 0.95, 0)], endCam: [V3(0.2, 1.3, 2.7), V3(0.2, 1.3, 2.0), V3(0, 1.28, 0)], headTilt: 0.5 };
 const hemi = new THREE.HemisphereLight(0xffffff, 0x6a5a4a, 1.3); npcScene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff0dd, 2.6); sun.position.set(3, 6, 5); npcScene.add(sun);
 const npcRim = new THREE.PointLight(0x9fd8ff, 6, 10); npcRim.position.set(-2, 2.2, -1.5); npcScene.add(npcRim);
@@ -407,7 +417,7 @@ function setXray(x) { // 0 = normal, 1 = tembus pandang
 const bw = n => NPC.bone(n).getWorldPosition(new THREE.Vector3());
 function armTo(side, target, w) { const S = side; const elbow = bw(S + 'ForeArm'); const pole = elbow.clone().add(new THREE.Vector3(side === 'Right' ? -0.3 : 0.3, -0.5, -0.2)); twoBoneIK(NPC.bone(S + 'Arm'), NPC.bone(S + 'ForeArm'), NPC.bone(S + 'Hand'), target, pole, w); }
 function holdProp(prop, side, tilt = 0) { const h = bw(side + 'Hand'); prop.visible = true; prop.position.copy(h).add(new THREE.Vector3(0, 0.02, 0.05)); prop.rotation.set(-tilt, 0, 0); }
-function hideAllNPCProps() { [npcCup, npcBottle, xStomach, xFat, belly].forEach(o => o.visible = false); npcSugar.forEach(s => s.visible = false); litter.forEach(c => c.visible = false); }
+function hideAllNPCProps() { props.forEach(p => p.visible = true); [npcCup, npcBottle, xStomach, xFat, belly].forEach(o => o.visible = false); npcSugar.forEach(s => s.visible = false); litter.forEach(c => c.visible = false); }
 function setWorld(kind) { // 'street' | 'park'
   stall.visible = kind === 'street'; buildings.visible = true;
 }
@@ -420,33 +430,33 @@ function npcHook(t) { // 0..T.s2 : minum boba -> x-ray -> gula ke lambung
   buildings.children.forEach(b => b.material.emissiveIntensity = 0); props.forEach(p => p.userData.lamp && (p.userData.lamp.material.emissiveIntensity = 0)); scrollProps(0, 0);
   NPC.char.position.set(0, 0, 0); NPC.char.rotation.y = 0;
   NPC.pose({ idle: 1 }, t + 1);
-  const head = bw('Head'); const mouth = head.clone().add(new THREE.Vector3(-0.03, -0.11, 0.17));
+  const head = bw('Head'); const mouth = head.clone().add(CFG.bobaMouth);
   const rest = bw('RightHand').add(new THREE.Vector3(0.02, 0.15, 0.18));
   const lift = ease((t - 1.0) / 1.3) * (1 - ease((t - 4.1) / 0.8) * 0.15);
   const target = rest.clone().lerp(mouth, lift).add(new THREE.Vector3(0, 0, Math.sin(Math.PI * lift) * 0.15));
   armTo('Right', target, 1);
   const sip = clamp((t - 2.3) / 0.3) * (1 - clamp((t - 3.6) / 0.4));
-  NPC.bone('Head').rotateX(-0.12 * sip); NPC.bone('Head').updateMatrixWorld(true);
+  NPC.bone('Head').rotateX(-0.12 * sip * CFG.headTilt); NPC.bone('Head').updateMatrixWorld(true);
   holdProp(npcCup, 'Right', lift * 0.15);
   const xr = ease((t - 3.3) / 0.6); setXray(xr);
-  const spine = bw('Spine1'); xStomach.visible = xr > 0; xStomach.position.copy(spine).add(new THREE.Vector3(0.03, -0.03, 0.07)); xStomach.material.opacity = 0.9 * xr;
+  const spine = bw(CFG.stomach[0]); xStomach.visible = xr > 0; xStomach.position.copy(spine).add(CFG.stomach[1]); xStomach.material.opacity = 0.9 * xr;
   npcSugar.forEach((s, i) => { const p = clamp((t - 3.5 - i * 0.07) / 0.9); s.visible = xr > 0.3 && p > 0 && p < 1; s.position.lerpVectors(mouth.clone().add(new THREE.Vector3(0, -0.05, -0.08)), xStomach.position, ease(p)); s.rotation.set(t * 3 + i, t * 2, 0); });
   // kamera: lebar -> medium close-up -> menembus ke lambung
   const push = ease(t / 3.4), dive = ease((t - 4.3) / 1.25);
-  const camA = new THREE.Vector3(0.9, 1.25, 3.0), camB = new THREE.Vector3(0.35, 1.45, 1.05), camC = xStomach.position.clone().add(new THREE.Vector3(0.02, 0.02, 0.12));
-  const lookA = new THREE.Vector3(0, 1.1, 0), lookB = head.clone().add(new THREE.Vector3(0, -0.12, 0)), lookC = xStomach.position;
+  const camA = new THREE.Vector3(0.9, 1.25, 3.0), camB = CFG.hookB.clone(), camC = xStomach.position.clone().add(new THREE.Vector3(0.02, 0.02, 0.12));
+  const lookA = new THREE.Vector3(0, 1.1, 0), lookB = head.clone().add(new THREE.Vector3(0, CFG.hookLook, 0)), lookC = xStomach.position;
   const cp = camA.clone().lerp(camB, push).lerp(camC, dive), lp = lookA.clone().lerp(lookB, push).lerp(lookC, dive);
   camera.position.copy(cp).add(new THREE.Vector3(Math.sin(t * 1.3) * 0.01, Math.cos(t * 1.1) * 0.01, 0)); camera.lookAt(lp); camera.fov = 40; camera.updateProjectionMatrix();
   npcRim.color.set(0x9fd8ff); bloom.strength = 0.22 + 0.2 * xr;
 }
 function npcFat(t) { // NPC x-ray, lemak tumbuh di perut
-  hideAllNPCProps(); setWorld('street'); skyCol(new THREE.Color(0x0e1a2a)); hemi.intensity = 0.6; sun.intensity = 1.0;
+  hideAllNPCProps(); setWorld('street'); props.forEach(p => p.visible = false); skyCol(new THREE.Color(0x0e1a2a)); hemi.intensity = 0.6; sun.intensity = 1.0;
   NPC.char.position.set(0, 0, 0); NPC.char.rotation.y = 0.6; NPC.pose({ idle: 0.4, sad_pose: 0.6 }, t);
   setXray(1);
   const lt = t - V(25.0), grow = ease(lt / 2.4);
-  const spine = bw('Spine'); xFat.visible = true; xFat.position.copy(bw('Hips')).add(new THREE.Vector3(0, 0.12, 0.07).applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.6)); xFat.scale.set(lerp(0.3, 0.8, grow), lerp(0.3, 0.65, grow), lerp(0.3, 0.85, grow));
+  const spine = bw('Spine'); xFat.visible = true; xFat.position.copy(bw('Hips')).add(CFG.fat.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.6)); xFat.scale.set(lerp(0.3, 0.8, grow), lerp(0.3, 0.65, grow), lerp(0.3, 0.85, grow));
   const pulse = 0.5 + 0.5 * Math.sin(t * 5); xFat.material.emissiveIntensity = 0.35 + 0.25 * pulse;
-  camera.position.set(1.4 - lt * 0.12, 1.15, 1.7 - lt * 0.15); camera.lookAt(spine); camera.fov = 40; camera.updateProjectionMatrix();
+  camera.position.copy(CFG.fatCam[0]).add(new THREE.Vector3(-lt * 0.12, 0, -lt * 0.15)); camera.lookAt(spine); camera.fov = 40; camera.updateProjectionMatrix();
   npcRim.color.set(0xffc24d); bloom.strength = 0.6;
 }
 function npcYears(t) { // berjalan lesu, siang-malam berganti cepat (bertahun-tahun)
@@ -456,9 +466,9 @@ function npcYears(t) { // berjalan lesu, siang-malam berganti cepat (bertahun-ta
   buildings.children.forEach(b => b.material.emissiveIntensity = (1 - cyc) * 0.9); props.forEach(p => p.userData.lamp && (p.userData.lamp.material.emissiveIntensity = (1 - cyc) * 2));
   NPC.char.position.set(0, 0, 0); NPC.char.rotation.y = Math.PI / 2; NPC.pose({ walk: 1 - 0.3 * ease(lt / 3), sad_pose: 0.3 * ease(lt / 3) }, t * 0.85);
   scrollProps(t, 0.9);
-  const spine = bw('Spine'); belly.visible = true; belly.position.copy(spine).add(new THREE.Vector3(0.07, 0.0, 0)); const bs = lerp(0.6, 1.1, ease(lt / 3)); belly.scale.set(bs, bs * 0.9, bs);
+  const spine = bw('Spine'); belly.visible = true; belly.position.copy(spine).add(CFG.belly); if (CFG.bellyColor) belly.material.color.set(CFG.bellyColor); const bs = lerp(0.5, CHAR === 'michelle' ? 1.1 : 0.8, ease(lt / 3)); belly.scale.set(bs, bs * 0.9, bs);
   litter.forEach((c, i) => { c.visible = i < 3 + lt * 4; seed = 200 + i; const x = ((R(-12, 12) - t * 0.9) % 24 + 24) % 24 - 12; c.position.set(x, 0.05, R(-0.6, 0.6)); c.rotation.set(Math.PI / 2, 0, R(0, 6)); });
-  camera.position.set(0.6, 1.15, 2.6); camera.lookAt(0.1, 0.95, 0); camera.fov = 40; camera.updateProjectionMatrix();
+  camera.position.copy(CFG.walkCam[0]); camera.lookAt(CFG.walkCam[1]); camera.fov = 40; camera.updateProjectionMatrix();
   npcRim.color.set(0xaab8ff); bloom.strength = 0.35;
 }
 function npcHealthy(t) { // air putih -> jogging -> mengangguk
@@ -467,17 +477,17 @@ function npcHealthy(t) { // air putih -> jogging -> mengangguk
   const t1 = V(49.4), t2 = V(52.1);
   if (t < t1) { // minum air putih
     NPC.char.position.set(0, 0, 0); NPC.char.rotation.y = 0; NPC.pose({ idle: 1 }, t); scrollProps(0, 0);
-    const lt = t - T.s6; const head = bw('Head'), mouth = head.clone().add(new THREE.Vector3(-0.03, -0.06, 0.15));
+    const lt = t - T.s6; const head = bw('Head'), mouth = head.clone().add(CFG.waterMouth);
     const rest = bw('RightHand').add(new THREE.Vector3(0.02, 0.15, 0.18)); const lift = ease((t - V(47.6)) / 0.8) * (1 - ease((t - (t1 - 0.5)) / 0.5));
     armTo('Right', rest.clone().lerp(mouth, lift).add(new THREE.Vector3(0, 0, Math.sin(Math.PI * lift) * 0.15)), 1);
-    NPC.bone('Head').rotateX(-0.25 * lift); NPC.bone('Head').updateMatrixWorld(true); holdProp(npcBottle, 'Right', lift * 1.2);
-    camera.position.set(0.5, 1.4, 1.6 - lt * 0.08); camera.lookAt(0, 1.3, 0);
+    NPC.bone('Head').rotateX(-0.25 * lift * CFG.headTilt); NPC.bone('Head').updateMatrixWorld(true); holdProp(npcBottle, 'Right', lift * 1.2);
+    camera.position.copy(CFG.drinkCam[0]).add(new THREE.Vector3(0, 0, -lt * 0.08)); camera.lookAt(CFG.drinkCam[1]);
   } else if (t < t2) { // jogging
     const lt = t - t1; NPC.char.position.set(0, 0, 0); NPC.char.rotation.y = Math.PI / 2; NPC.pose({ run: 1 }, t); scrollProps(t, 3.2);
-    camera.position.set(0.9 + Math.sin(lt) * 0.2, 1.0, 2.3); camera.lookAt(0.2, 0.9, 0);
+    camera.position.copy(CFG.runCam[0]).add(new THREE.Vector3(Math.sin(lt) * 0.2, 0, 0)); camera.lookAt(CFG.runCam[1]);
   } else { // mengangguk senang ke kamera
     const lt = t - t2; NPC.char.position.set(0, 0, 0); NPC.char.rotation.y = 0; NPC.pose({ agree: 0.8, idle: 0.2 }, lt + 0.2); scrollProps(0, 0);
-    camera.position.set(0.2, 1.42, lerp(1.9, 1.3, ease(lt / 3))); camera.lookAt(0, 1.38, 0);
+    camera.position.lerpVectors(CFG.endCam[0], CFG.endCam[1], ease(lt / 3)); camera.lookAt(CFG.endCam[2]);
   }
   camera.fov = 40; camera.updateProjectionMatrix(); npcRim.color.set(0xffffff); bloom.strength = 0.2;
 }
