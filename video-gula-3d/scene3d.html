@@ -1,0 +1,375 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>html,body{margin:0;background:#000}canvas{display:block}</style>
+<script src="captions.js"></script>
+<script type="importmap">{"imports":{"three":"./node_modules/three/build/three.module.js","three/addons/":"./node_modules/three/examples/jsm/"}}</script>
+</head><body>
+<canvas id="out" width="1080" height="1920"></canvas>
+<script type="module">
+// Video Shorts 3D (CGI) — "Apa yang terjadi di tubuhmu saat minum boba setiap hari?"
+// Semua waktu = detik video. Voiceover mulai di OFF.
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+
+const OFF = 0.8, V = s => s + OFF;
+const OW = 1080, OH = 1920;          // ukuran video
+const RW = 720, RH = 1280;           // resolusi render 3D (di-upscale halus)
+const out = document.getElementById('out'), o = out.getContext('2d');
+
+// ---------- util ----------
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const ease = t => { t = clamp(t); return t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; };
+const easeOut = t => 1 - Math.pow(1 - clamp(t), 3);
+const pop = (t, t0, d = 0.5) => { const x = clamp((t - t0) / d); if (x <= 0) return 0; const s = 2.2; return 1 + (s + 1) * Math.pow(x - 1, 3) + s * Math.pow(x - 1, 2); };
+let seed = 1; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+const R = (a, b) => a + rnd() * (b - a);
+
+// ---------- renderer ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(RW, RH, false);
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.1;
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(50, RW / RH, 0.05, 400);
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(RW, RH), 0.6, 0.5, 0.82);
+composer.addPass(bloom); composer.addPass(new OutputPass());
+
+// lampu
+const amb = new THREE.AmbientLight(0xffffff, 0.35); scene.add(amb);
+const key = new THREE.DirectionalLight(0xfff1e0, 2.2); key.position.set(4, 6, 8); scene.add(key);
+const rim = new THREE.PointLight(0xff3355, 60, 60); rim.position.set(-6, 2, -4); scene.add(rim);
+const fill = new THREE.PointLight(0xffc870, 40, 50); fill.position.set(5, -3, 6); scene.add(fill);
+
+// ---------- material ----------
+const M = {
+  rbc: new THREE.MeshPhysicalMaterial({ color: 0xb0101f, roughness: 0.35, clearcoat: 0.4, sheen: 0.6, sheenColor: new THREE.Color(0xff6070) }),
+  gold: new THREE.MeshStandardMaterial({ color: 0xffc23d, emissive: 0xff9a00, emissiveIntensity: 1.0, metalness: 0.3, roughness: 0.3 }),
+  goldBond: new THREE.MeshStandardMaterial({ color: 0xffe08a, emissive: 0xffb000, emissiveIntensity: 0.4 }),
+  keyMat: new THREE.MeshStandardMaterial({ color: 0xffd34d, emissive: 0xffa000, emissiveIntensity: 0.9, metalness: 0.9, roughness: 0.25 }),
+  sugar: new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.55, clearcoat: 0.2, sheen: 0.5, emissive: 0x000000 }),
+  vessel: null,
+  cell: new THREE.MeshPhysicalMaterial({ color: 0xd98fc0, roughness: 0.3, transparent: true, opacity: 0.55, clearcoat: 0.6, emissive: 0x401030, side: THREE.DoubleSide, depthWrite: false }),
+  nucleus: new THREE.MeshStandardMaterial({ color: 0x7a2d78, emissive: 0x3a0f3a, roughness: 0.5 }),
+  door: new THREE.MeshStandardMaterial({ color: 0xffb347, emissive: 0x803000, emissiveIntensity: 0.6, metalness: 0.6, roughness: 0.35 }),
+  rust: new THREE.MeshStandardMaterial({ color: 0x7a4026, roughness: 0.95, metalness: 0.4 }),
+  fat: new THREE.MeshPhysicalMaterial({ color: 0xf6c544, roughness: 0.2, clearcoat: 1, emissive: 0x5a3a00, transparent: true, opacity: 0.92 }),
+  cup: new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.05, transparent: true, opacity: 0.22, clearcoat: 1, side: THREE.DoubleSide, depthWrite: false }),
+  tea: new THREE.MeshPhysicalMaterial({ color: 0xa8784f, roughness: 0.35, clearcoat: 0.6, emissive: 0x2a1405, transparent: true, opacity: 0.55, depthWrite: false }),
+  pearl: new THREE.MeshPhysicalMaterial({ color: 0x140806, roughness: 0.1, clearcoat: 1 }),
+  straw: new THREE.MeshStandardMaterial({ color: 0xff4f8b, roughness: 0.4 }),
+  water: new THREE.MeshPhysicalMaterial({ color: 0x7fdcff, roughness: 0.02, transparent: true, opacity: 0.7, clearcoat: 1, emissive: 0x0a4a66 }),
+  green: new THREE.MeshStandardMaterial({ color: 0x3fbf5a, roughness: 0.6, emissive: 0x08300f }),
+  apple: new THREE.MeshPhysicalMaterial({ color: 0xe02a2a, roughness: 0.25, clearcoat: 0.8 }),
+};
+
+// tekstur dinding pembuluh darah (canvas)
+function vesselTexture() {
+  const c = document.createElement('canvas'); c.width = 512; c.height = 512; const g = c.getContext('2d');
+  g.fillStyle = '#7a0a14'; g.fillRect(0, 0, 512, 512); seed = 77;
+  for (let i = 0; i < 900; i++) { g.fillStyle = `rgba(${R(150, 230) | 0},${R(10, 50) | 0},${R(30, 60) | 0},${R(0.05, 0.25)})`; g.beginPath(); g.ellipse(R(0, 512), R(0, 512), R(4, 40), R(2, 14), R(0, 3), 0, 7); g.fill(); }
+  g.strokeStyle = 'rgba(255,120,140,0.35)'; g.lineWidth = 2;
+  for (let i = 0; i < 40; i++) { g.beginPath(); let x = R(0, 512), y = R(0, 512); g.moveTo(x, y); for (let k = 0; k < 8; k++) { x += R(-30, 30); y += R(10, 40); g.lineTo(x, y); } g.stroke(); }
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(3, 12); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+M.vessel = new THREE.MeshStandardMaterial({ map: vesselTexture(), side: THREE.BackSide, roughness: 0.6, emissive: 0x3a0008, emissiveIntensity: 1 });
+
+// ---------- geometri / pembuat objek ----------
+function makeRBC() { // sel darah merah: torus pipih + cakram tengah tipis
+  const g = new THREE.Group();
+  const tor = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.22, 20, 40), M.rbc); g.add(tor);
+  const mid = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.12, 32), M.rbc); mid.rotation.x = Math.PI / 2; g.add(mid);
+  g.scale.set(1, 1, 0.75); return g;
+}
+const sph = new THREE.SphereGeometry(0.11, 16, 12), bondG = new THREE.CylinderGeometry(0.035, 0.035, 1, 8);
+function makeGlucose() { // cincin heksagon molekul glukosa
+  const g = new THREE.Group(); const r = 0.32, pts = [];
+  for (let k = 0; k < 6; k++) { const a = k * Math.PI / 3; pts.push(new THREE.Vector3(Math.cos(a) * r, Math.sin(a) * r, 0)); }
+  pts.forEach((p, k) => {
+    const s = new THREE.Mesh(sph, M.gold); s.position.copy(p); g.add(s);
+    const q = pts[(k + 1) % 6], b = new THREE.Mesh(bondG, M.goldBond);
+    b.position.copy(p).add(q).multiplyScalar(0.5); b.scale.y = p.distanceTo(q); b.lookAt(q); b.rotateX(Math.PI / 2); g.add(b);
+  });
+  const tail = new THREE.Mesh(sph, M.gold); tail.position.set(0.55, 0.3, 0); g.add(tail);
+  const tb = new THREE.Mesh(bondG, M.goldBond); tb.position.set(0.43, 0.22, 0); tb.scale.y = 0.28; tb.rotation.z = -1.05; g.add(tb);
+  return g;
+}
+function makeKey(mat = M.keyMat) { // kunci insulin
+  const g = new THREE.Group();
+  const bow = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.08, 14, 32), mat); bow.position.x = -0.55; g.add(bow);
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.0, 12), mat); shaft.rotation.z = Math.PI / 2; shaft.position.x = 0.2; g.add(shaft);
+  [[0.45, 0.14], [0.62, 0.1]].forEach(([x, h]) => { const tth = new THREE.Mesh(new THREE.BoxGeometry(0.1, h * 2, 0.1), mat); tth.position.set(x, -h, 0); g.add(tth); });
+  return g;
+}
+const cubeG = new RoundedBoxGeometry(0.5, 0.5, 0.5, 3, 0.06);
+function makeSugar() { return new THREE.Mesh(cubeG, M.sugar); }
+
+// ---------- KELOMPOK ADEGAN ----------
+// 1) Gelas boba
+const boba = new THREE.Group(); scene.add(boba);
+{
+  const cup = new THREE.Mesh(new THREE.CylinderGeometry(1.25, 0.95, 3.6, 48, 1, true), M.cup); boba.add(cup);
+  const tea = new THREE.Mesh(new THREE.CylinderGeometry(1.18, 0.92, 3.1, 48), M.tea); tea.position.y = -0.2; boba.add(tea);
+  const lid = new THREE.Mesh(new THREE.SphereGeometry(1.25, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), M.cup); lid.position.y = 1.8; lid.scale.y = 0.35; boba.add(lid);
+  seed = 5; for (let i = 0; i < 46; i++) { const p = new THREE.Mesh(new THREE.SphereGeometry(0.16, 16, 12), M.pearl); const a = R(0, 6.28), rr = R(0, 0.8); p.position.set(Math.cos(a) * rr, R(-1.75, -0.95), Math.sin(a) * rr); boba.add(p); }
+  const straw = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 4.6, 20), M.straw); straw.position.set(0.3, 1.6, 0); straw.rotation.z = -0.18; boba.add(straw);
+}
+// kubus gula yang meledak keluar
+const sugars = []; seed = 11;
+for (let i = 0; i < 26; i++) { const m = makeSugar(); m.userData = { dir: new THREE.Vector3(R(-1, 1), R(0.3, 1.4), R(-0.2, 1)).normalize(), sp: R(3, 6), rot: new THREE.Vector3(R(-3, 3), R(-3, 3), R(-3, 3)), d: R(0, 0.6) }; scene.add(m); sugars.push(m); }
+
+// 2) Terowongan pembuluh darah
+const vessel = new THREE.Mesh(new THREE.CylinderGeometry(5, 5, 260, 48, 1, true), M.vessel); vessel.rotation.x = Math.PI / 2; vessel.position.z = -110; scene.add(vessel);
+const rbcs = []; seed = 21;
+for (let i = 0; i < 70; i++) { const r = makeRBC(); const a = R(0, 6.28), rr = R(0.5, 4.2); r.userData = { x: Math.cos(a) * rr, y: Math.sin(a) * rr, z: R(-200, 10), rx: R(0, 6), ry: R(0, 6), sp: R(0.6, 1.4) }; scene.add(r); rbcs.push(r); }
+const glus = []; seed = 31;
+for (let i = 0; i < 90; i++) { const gl = makeGlucose(); const a = R(0, 6.28), rr = R(0.3, 4); gl.userData = { x: Math.cos(a) * rr, y: Math.sin(a) * rr, z: R(-200, 10), r: R(0, 6), sp: R(0.8, 1.6), k: i }; scene.add(gl); glus.push(gl); }
+const keys = []; seed = 41;
+for (let i = 0; i < 10; i++) { const k = makeKey(); k.userData = { a: R(0, 6.28), rr: R(0.8, 3), z: R(-40, -5), ph: R(0, 6) }; scene.add(k); keys.push(k); }
+
+// 3) Sel dengan pintu (dekat ujung terowongan)
+const cell = new THREE.Group(); scene.add(cell);
+const cellBody = new THREE.Mesh(new THREE.SphereGeometry(3.2, 64, 48), M.cell); cell.add(cellBody);
+const nucleus = new THREE.Mesh(new THREE.SphereGeometry(1.1, 32, 24), M.nucleus); nucleus.position.set(0.6, 0.5, -0.8); cell.add(nucleus);
+const doorPivot = new THREE.Group(); doorPivot.position.set(-0.7, 0, 3.1); cell.add(doorPivot);
+const door = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 0.16, 40), M.door); door.rotation.x = Math.PI / 2; door.position.x = 0.7; doorPivot.add(door);
+const hole = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.34, 0.2), new THREE.MeshBasicMaterial({ color: 0x000000 })); hole.position.set(1.0, 0, 0.1); doorPivot.add(hole);
+const frame = new THREE.Mesh(new THREE.TorusGeometry(0.74, 0.09, 12, 40), M.door); frame.position.set(0, 0, 3.12); cell.add(frame);
+const innerGlu = []; seed = 51;
+for (let i = 0; i < 40; i++) { const gl = makeGlucose(); gl.scale.setScalar(0.7); gl.userData = { p: new THREE.Vector3(R(-2, 2), R(-2, 2), R(-2, 2)).clampLength(0, 2.4), r: R(0, 6) }; cell.add(gl); innerGlu.push(gl); }
+const locks = []; seed = 61;
+for (let i = 0; i < 9; i++) { const l = new THREE.Group(); const b = new THREE.Mesh(new RoundedBoxGeometry(0.6, 0.55, 0.3, 2, 0.06), M.rust); l.add(b); const sh = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.06, 8, 20, Math.PI), M.rust); sh.position.y = 0.28; l.add(sh);
+  const th = R(-1.1, 1.1), ph = R(-0.9, 0.9); const n = new THREE.Vector3(Math.sin(th) * Math.cos(ph), Math.sin(ph), Math.cos(th) * Math.cos(ph)); l.position.copy(n.clone().multiplyScalar(3.22)); l.lookAt(n.clone().multiplyScalar(10)); cell.add(l); locks.push(l); }
+
+// 4) Tetes lemak
+const fats = []; seed = 71;
+for (let i = 0; i < 60; i++) { const f = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 24), M.fat); f.userData = { p: new THREE.Vector3(R(-5, 5), R(-8, 8), R(-6, 2)), s: R(0.5, 1.5), d: i * 0.07 }; scene.add(f); fats.push(f); }
+
+// 5) Ikon sehat
+const healthy = new THREE.Group(); scene.add(healthy);
+const bottle = new THREE.Group(); { const b = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 2.2, 40), M.water); bottle.add(b); const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.35, 24), new THREE.MeshStandardMaterial({ color: 0x1e88e5 })); cap.position.y = 1.3; bottle.add(cap); }
+const apple = new THREE.Group(); { const a = new THREE.Mesh(new THREE.SphereGeometry(0.8, 40, 30), M.apple); a.scale.y = 0.9; apple.add(a); const st = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.4, 8), new THREE.MeshStandardMaterial({ color: 0x5a3a1a })); st.position.y = 0.85; apple.add(st); const lf = new THREE.Mesh(new THREE.SphereGeometry(0.25, 16, 8), M.green); lf.scale.set(1, 0.3, 0.6); lf.position.set(0.25, 0.9, 0); apple.add(lf); }
+const broc = new THREE.Group(); { const st = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.3, 1.1, 16), new THREE.MeshStandardMaterial({ color: 0x8fd17a })); st.position.y = -0.5; broc.add(st); seed = 81; for (let i = 0; i < 9; i++) { const b = new THREE.Mesh(new THREE.SphereGeometry(R(0.3, 0.45), 20, 16), M.green); b.position.set(R(-0.5, 0.5), R(0.1, 0.6), R(-0.4, 0.4)); broc.add(b); } }
+healthy.add(bottle, apple, broc);
+
+// ---------- bantu visibilitas ----------
+const groups = { boba, cell, healthy };
+function show(list) { // tampilkan hanya objek adegan aktif
+  boba.visible = list.includes('boba'); cell.visible = list.includes('cell'); healthy.visible = list.includes('healthy');
+  vessel.visible = list.includes('vessel');
+  sugars.forEach(s => s.visible = list.includes('sugar'));
+  rbcs.forEach(r => r.visible = list.includes('rbc'));
+  glus.forEach(g => g.visible = list.includes('glu'));
+  keys.forEach(k => k.visible = list.includes('keys'));
+  fats.forEach(f => f.visible = list.includes('fat'));
+}
+function flowTunnel(t, speed, nGlu = 90, scaleGlu = 1) {
+  rbcs.forEach(r => { const u = r.userData; let z = ((u.z + t * speed * u.sp) % 210 + 210) % 210 - 200; r.position.set(u.x + Math.sin(t + u.rx) * 0.2, u.y + Math.cos(t * 0.8 + u.ry) * 0.2, z); r.rotation.set(u.rx + t * 0.6, u.ry + t * 0.4, 0); });
+  glus.forEach((gl, i) => { const u = gl.userData; gl.visible = gl.visible && i < nGlu; let z = ((u.z + t * speed * u.sp) % 210 + 210) % 210 - 200; gl.position.set(u.x, u.y + Math.sin(t * 1.3 + u.r) * 0.25, z); gl.rotation.set(t * 0.7 + u.r, t * 0.9, u.r); gl.scale.setScalar(scaleGlu); });
+}
+
+// ---------- adegan ----------
+const T = { // waktu kunci (detik video)
+  s1: 0, s2: V(4.75), s3: V(10.8), s4: V(19.25), s5: V(28.15), s6: V(43.9), end: 58
+};
+function setCam(x, y, z, tx, ty, tz, fov = 50) { camera.position.set(x, y, z); camera.lookAt(tx, ty, tz); if (camera.fov !== fov) { camera.fov = fov; camera.updateProjectionMatrix(); } }
+
+let overlay = []; // label teks 2D untuk frame ini
+function label(text, x, y, size, color, a = 1, s = 1, glow = color) { overlay.push({ text, x, y, size, color, a, s, glow }); }
+
+function sceneHook(t) {
+  show(['boba', 'sugar']); scene.background = new THREE.Color(0x12030a); scene.fog = null;
+  rim.color.set(0xff3366); fill.color.set(0xffb86b);
+  const orbit = t * 0.35;
+  setCam(Math.sin(orbit) * 9, 1.2 + t * 0.15, Math.cos(orbit) * 9, 0, 0.6, 0);
+  boba.position.set(0, -0.4, 0); boba.rotation.y = t * 0.3;
+  sugars.forEach((s, i) => { const u = s.userData; const p = clamp((t - 1.2 - u.d) / 3.2); s.visible = p > 0; s.position.set(0.3, 3.6, 0).addScaledVector(u.dir, easeOut(p) * u.sp); s.position.y -= p * p * 2.5; s.rotation.set(u.rot.x * p, u.rot.y * p, u.rot.z * p); s.scale.setScalar(lerp(0.3, 1, easeOut(p * 3))); });
+  bloom.strength = 0.5;
+  const a = clamp(t / 0.6);
+  label('APA YANG TERJADI', OW / 2, 300, 92, '#ffffff', a, pop(t, 0.1));
+  label('DI TUBUHMU? 😳', OW / 2, 410, 92, '#ffd23f', a, pop(t, 0.35));
+}
+function sceneStomach(t) {
+  const lt = t - T.s2;
+  // kubus gula jatuh ke "lambung" bercahaya lalu pecah jadi glukosa, kamera masuk ke pembuluh
+  show(['sugar', 'glu', 'vessel', 'rbc']); scene.background = new THREE.Color(0x1a0204);
+  scene.fog = new THREE.FogExp2(0x2a0308, 0.045);
+  rim.color.set(0xff6a3d); fill.color.set(0xffc870);
+  const dive = ease((t - V(8.3)) / 2.2);
+  setCam(0, lerp(1.5, 0, dive), lerp(8, -4, dive), 0, lerp(-0.5, 0, dive), lerp(0, -30, dive));
+  sugars.forEach((s, i) => { const u = s.userData; const fall = clamp((lt - u.d * 1.5) / 2.2); const brk = clamp((t - V(7.4) - i * 0.02) / 0.5);
+    s.visible = brk < 1; s.position.set(Math.sin(i * 2.4) * 2.2, lerp(6, -0.5, ease(fall)), Math.cos(i * 1.7) * 1.5 - 2); s.rotation.set(lt * u.rot.x * 0.5, lt * u.rot.y * 0.5, 0); s.scale.setScalar(1 - brk); });
+  const g = clamp((t - V(7.5)) / 0.8);
+  flowTunnel(t, lerp(2, 14, dive), Math.round(lerp(0, 60, g)), lerp(0.2, 1, g));
+  vessel.material.emissiveIntensity = 1.2;
+  bloom.strength = 0.6;
+  label('GULA ➜ GLUKOSA', OW / 2, 330, 84, '#ffd23f', clamp((t - V(7.5)) / 0.4) * (1 - clamp((t - V(9.8)) / 0.4)), pop(t, V(7.5)));
+}
+function sceneInsulin(t) {
+  show(['vessel', 'rbc', 'glu', 'keys', 'cell']); scene.background = new THREE.Color(0x1a0204);
+  scene.fog = new THREE.FogExp2(0x2a0308, 0.03);
+  rim.color.set(0xff3355); fill.color.set(0xffd27a);
+  const approach = ease((t - V(13.0)) / 2.6);
+  const cz = lerp(-14, -9.5, approach);
+  setCam(lerp(0, -1.2, approach), lerp(0, 0.2, approach), cz + lerp(10, 6.5, approach), lerp(0, -0.7, approach), 0, cz);
+  cell.position.set(0, 0, cz - 3.5); cell.rotation.set(0, 0, 0); cellBody.material.emissiveIntensity = 1;
+  flowTunnel(t, lerp(10, 3, approach), 60, 1);
+  // kunci insulin berdatangan (pankreas melepas insulin)
+  keys.forEach((k, i) => { const u = k.userData; const inA = clamp((t - V(10.9) - i * 0.12) / 1.2);
+    k.visible = inA > 0; const a = u.a + t * 0.5; k.position.set(Math.cos(a) * u.rr * 1.2, Math.sin(a) * u.rr, lerp(cz + 9, cz + 0.5 + (i % 3) * 0.8, easeOut(inA))); k.scale.setScalar(0.8); k.rotation.set(t + u.ph, t * 0.7, 0); });
+  // satu kunci utama masuk ke lubang kunci pintu
+  const main = keys[0], kp = ease((t - V(14.0)) / 1.3);
+  const doorWorld = new THREE.Vector3(-0.7 + 1.0, 0, 3.25).add(cell.position);
+  main.visible = true; main.position.lerpVectors(new THREE.Vector3(-2.5, 1.6, cz + 4), doorWorld.clone().add(new THREE.Vector3(-0.75, 0.15, 0.25)), kp);
+  main.rotation.set(0, lerp(0.6, -Math.PI / 2 + 0.0, kp), kp >= 1 ? -Math.min(1, (t - V(15.3)) * 3) * 1.4 : 0);
+  main.rotation.order = 'YXZ';
+  const open = ease((t - V(15.6)) / 0.8); doorPivot.rotation.y = -open * 1.9;
+  // glukosa tersedot masuk ke sel, sel menyala (energi)
+  innerGlu.forEach((g, i) => { const p = clamp((t - V(16.4) - i * 0.03) / 1.0); g.visible = p > 0; const from = new THREE.Vector3(-0.1, 0, 5.5); g.position.lerpVectors(from, g.userData.p, ease(p)); g.rotation.set(t + g.userData.r, t, 0); });
+  locks.forEach(l => l.visible = false);
+  const energy = clamp((t - V(17.8)) / 1.0); cellBody.material.emissive.setRGB(lerp(0.25, 0.6, energy), lerp(0.06, 0.32, energy), lerp(0.19, 0.08, energy));
+  bloom.strength = lerp(0.6, 0.9, energy);
+  label('INSULIN = KUNCI 🔑', OW / 2, 330, 84, '#ffd23f', clamp((t - V(13.2)) / 0.4) * (1 - clamp((t - V(16.2)) / 0.4)), pop(t, V(13.2)));
+  label('⚡ ENERGI ⚡', OW / 2, 330, 96, '#ffe066', clamp((t - V(18.4)) / 0.3), pop(t, V(18.4)));
+}
+function sceneFat(t) {
+  show(['cell', 'fat']); scene.background = new THREE.Color(0x160d02); scene.fog = new THREE.FogExp2(0x1d1203, 0.02);
+  rim.color.set(0xffa830); fill.color.set(0xfff0c0);
+  const lt = t - T.s4;
+  const pull = ease((t - V(23.2)) / 2.0);
+  setCam(Math.sin(lt * 0.2) * 2, lerp(0, 1.5, pull), lerp(9.5, 16, pull), 0, 0, 0);
+  cell.position.set(0, 0, 0); cell.rotation.y = lt * 0.15;
+  const swell = 1 + ease((t - V(20.5)) / 2.5) * 0.25 + Math.sin(t * 12) * 0.01 * clamp((t - V(21.5)) / 1);
+  cell.scale.setScalar(swell); doorPivot.rotation.y = -1.9 * (1 - clamp((t - V(21.0)) / 0.6));
+  cellBody.material.emissive.setRGB(0.22, 0.12, 0.03);
+  innerGlu.forEach((g, i) => { g.visible = true; const jit = Math.sin(t * 5 + i) * 0.05; g.position.copy(g.userData.p).multiplyScalar(1.05 + jit); g.rotation.set(t + i, t * 1.3, 0); });
+  locks.forEach(l => l.visible = false);
+  // kelebihan glukosa berubah menjadi tetes lemak yang membesar
+  fats.forEach(f => { const u = f.userData; const p = clamp((t - V(23.3) - u.d) / 1.2); f.visible = p > 0;
+    const dir = u.p.clone(); f.position.copy(dir.multiplyScalar(lerp(0.3, 1, easeOut(p)))); f.scale.setScalar(u.s * pop(t, V(23.3) + u.d, 0.7) * (1 + 0.04 * Math.sin(t * 3 + u.d * 20))); });
+  bloom.strength = 0.8;
+  label('SEL SUDAH PENUH!', OW / 2, 330, 88, '#ffffff', clamp((t - V(21.6)) / 0.3) * (1 - clamp((t - V(23.2)) / 0.3)), pop(t, V(21.6)));
+  label('SISANYA ➜ LEMAK', OW / 2, 330, 88, '#ffc93c', clamp((t - V(23.4)) / 0.3), pop(t, V(23.4)));
+}
+function sceneDiabetes(t) {
+  const lt = t - T.s5;
+  const phase2 = t > V(35.3); // gula menumpuk di darah + kerusakan
+  if (!phase2) {
+    show(['cell', 'keys', 'vessel', 'rbc', 'glu']); scene.background = new THREE.Color(0x140204); scene.fog = new THREE.FogExp2(0x200206, 0.035);
+    rim.color.set(0xff2020); fill.color.set(0xff9a50);
+    setCam(Math.sin(lt * 0.25) * 2.5, 0.8, 10.5, 0, 0, 0);
+    cell.position.set(0, 0, 0); cell.scale.setScalar(1); cell.rotation.y = Math.sin(lt * 0.3) * 0.25; doorPivot.rotation.y = 0;
+    innerGlu.forEach(g => g.visible = false); fats.forEach(f => f.visible = false);
+    cellBody.material.emissive.setRGB(0.15, 0.03, 0.06);
+    const rustA = clamp((t - V(31.4)) / 0.8); locks.forEach((l, i) => { l.visible = rustA > 0; l.scale.setScalar(pop(t, V(31.4) + i * 0.07)); });
+    // kunci mencoba masuk lalu terpental
+    keys.forEach((k, i) => { const u = k.userData; k.visible = true; const cyc = ((t * 0.8 + i * 0.37) % 1);
+      const target = locks[i % locks.length].position.clone().applyMatrix4(cell.matrixWorld); const start = target.clone().multiplyScalar(2.4);
+      const p = cyc < 0.6 ? ease(cyc / 0.6) : 1 - easeOut((cyc - 0.6) / 0.4) * 0.8;
+      k.position.lerpVectors(start, target.clone().multiplyScalar(1.08), p); k.lookAt(target); k.rotateY(Math.PI / 2);
+      if (cyc > 0.6) k.rotateZ(Math.sin(t * 40) * 0.3); });
+    flowTunnel(t, 1.5, 30, 0.8);
+    rbcs.forEach(r => r.position.z -= 30); glus.forEach(g => g.position.z -= 30); vessel.position.z = -140;
+    bloom.strength = 0.8;
+    label('SEL JADI KEBAL 🔒', OW / 2, 330, 86, '#ff6b6b', clamp((t - V(31.4)) / 0.3), pop(t, V(31.4)));
+  } else {
+    show(['vessel', 'rbc', 'glu']); scene.background = new THREE.Color(0x1a0003); scene.fog = new THREE.FogExp2(0x2a0004, 0.05);
+    vessel.position.z = -110;
+    const pulse = 0.5 + 0.5 * Math.sin(t * 7);
+    rim.color.setRGB(1, 0.1 + 0.1 * pulse, 0.1); fill.color.set(0xff5030);
+    setCam(Math.sin(t * 13) * 0.04 * clamp((t - V(37.5)) / 1), Math.cos(t * 11) * 0.04, 2 - (t - V(35.3)) * 0.6, 0, 0, -30);
+    const dense = clamp((t - V(35.3)) / 1.5);
+    flowTunnel(t, 2.2, Math.round(lerp(40, 90, dense)), lerp(0.9, 1.2, dense));
+    vessel.material.emissive.setRGB(0.25 + 0.25 * pulse * clamp((t - V(37.5)) / 1), 0.0, 0.02);
+    bloom.strength = 0.7 + 0.25 * pulse * clamp((t - V(37.5)) / 1);
+    label('GULA MENUMPUK!', OW / 2, 330, 90, '#ffd23f', clamp((t - V(35.4)) / 0.3) * (1 - clamp((t - V(38.3)) / 0.3)), pop(t, V(35.4)));
+    const organs = [['PEMBULUH DARAH', V(38.4)], ['GINJAL', V(39.5)], ['MATA', V(40.2)], ['JANTUNG', V(41.3)]];
+    const cur = organs.filter(([, tt]) => t >= tt).pop();
+    if (cur && t < V(42.1)) label('⚠️ ' + cur[0], OW / 2, 330, 84, '#ff5c5c', 1, pop(t, cur[1], 0.3));
+    if (t >= V(42.1)) { label('DIABETES', OW / 2, 700, 150, '#ff3b3b', 1, pop(t, V(42.1), 0.5)); label('TIPE 2', OW / 2, 860, 110, '#ffffff', 1, pop(t, V(42.4), 0.5)); }
+  }
+  vessel.material.emissiveIntensity = 1;
+}
+function sceneHealthy(t) {
+  const lt = t - T.s6;
+  show(['healthy', 'vessel', 'rbc', 'glu']);
+  const sky = new THREE.Color().lerpColors(new THREE.Color(0x1a0204), new THREE.Color(0x04222a), clamp(lt / 1.2));
+  scene.background = sky; scene.fog = new THREE.FogExp2(sky.getHex(), 0.03);
+  rim.color.set(0x37e2d5); fill.color.set(0xbff7ff);
+  vessel.material.emissive.setRGB(0.02, 0.12, 0.14); vessel.position.z = -110;
+  setCam(Math.sin(lt * 0.2) * 1.5, 0.5, 11, 0, 0, 0);
+  flowTunnel(t, 3, 14, 0.8); rbcs.forEach(r => r.position.z -= 25); glus.forEach(g => g.position.z -= 25);
+  // sel sehat bercahaya teal, pintu terbuka-tutup lancar
+  cell.position.set(0, -2.8, -6); cell.scale.setScalar(0.8); cell.rotation.y = lt * 0.2; locks.forEach(l => l.visible = false); innerGlu.forEach(g => g.visible = false); fats.forEach(f => f.visible = false);
+  doorPivot.rotation.y = -0.9 - 0.9 * Math.sin(t * 2);
+  cellBody.material.emissive.setRGB(0.05, 0.35 * clamp(lt / 2), 0.35 * clamp(lt / 2));
+  // ikon kebiasaan sehat
+  const items = [[bottle, V(47.9), -1.9], [broc, V(49.2), 0], [apple, V(49.8), 1.9]];
+  items.forEach(([obj, t0, x]) => { const s = pop(t, t0, 0.6); obj.visible = s > 0; obj.position.set(x, 1.0 + Math.sin(t * 2 + x) * 0.15, 0); obj.scale.setScalar(s * 0.85); obj.rotation.y = t * 0.8 + x; });
+  bloom.strength = 0.9;
+  const checks = [['✅ Kurangi minuman manis', V(46.5)], ['✅ Air putih, sayur & buah', V(47.9)], ['✅ Bergerak setiap hari', V(50.5)]];
+  if (t < V(52.1)) checks.forEach(([s, t0], i) => label(s, OW / 2, 1020 + i * 110, 62, '#ffffff', clamp((t - t0) / 0.3), pop(t, t0, 0.4)));
+  label('KAMU BISA MENCEGAHNYA!', OW / 2, 320, 78, '#5ff5e3', clamp((t - V(44.0)) / 0.3) * (1 - clamp((t - V(52.0)) / 0.3)), pop(t, V(44.0)));
+  if (t >= V(52.1)) { label('Tubuhmu akan', OW / 2, 1050, 96, '#ffffff', 1, pop(t, V(52.1))); label('berterima kasih 💙', OW / 2, 1170, 96, '#5ff5e3', 1, pop(t, V(52.9))); }
+}
+
+// ---------- subtitle (gaya Shorts) ----------
+function captions(t) {
+  const cap = (window.CAPTIONS || []).find(c => t >= c.start - 0.05 && t < c.end);
+  if (!cap) return;
+  const size = 82, y = 1430, sp = 22;
+  o.font = `900 ${size}px "Inter Display", Inter, sans-serif`; o.textBaseline = 'middle'; o.textAlign = 'left';
+  const ws = cap.words.map(w => w.t.toUpperCase());
+  const widths = ws.map(w => o.measureText(w).width), total = widths.reduce((a, b) => a + b, 0) + sp * (ws.length - 1);
+  const s = (0.9 + 0.1 * easeOut((t - cap.start) / 0.12)) * Math.min(1, 980 / total);
+  o.save(); o.translate(OW / 2, y); o.scale(s, s);
+  let x = -total / 2;
+  cap.words.forEach((w, i) => {
+    const active = t >= w.s - 0.03 && t < w.e + 0.08;
+    o.lineJoin = 'round'; o.lineWidth = 16; o.strokeStyle = '#000'; o.strokeText(ws[i], x, 0);
+    o.fillStyle = active ? '#ffd23f' : '#ffffff'; o.fillText(ws[i], x, 0); x += widths[i] + sp;
+  });
+  o.restore();
+}
+
+// ---------- komposisi frame ----------
+function drawOverlay() {
+  for (const L of overlay) {
+    if (L.a <= 0 || L.s <= 0) continue;
+    o.save(); o.globalAlpha = clamp(L.a); o.translate(L.x, L.y); o.scale(L.s, L.s);
+    o.font = `900 ${L.size}px "Inter Display", Inter, "Noto Color Emoji", sans-serif`; o.textAlign = 'center'; o.textBaseline = 'middle';
+    const fw = o.measureText(L.text).width; if (fw > 960) o.scale(960 / fw, 960 / fw);
+    o.lineJoin = 'round'; o.lineWidth = L.size * 0.2; o.strokeStyle = 'rgba(0,0,0,0.9)'; o.strokeText(L.text, 0, 0);
+    o.shadowColor = L.glow; o.shadowBlur = 30; o.fillStyle = L.color; o.fillText(L.text, 0, 0); o.restore();
+  }
+}
+function render(t) {
+  overlay = [];
+  if (t < T.s2) sceneHook(t);
+  else if (t < T.s3) sceneStomach(t);
+  else if (t < T.s4) sceneInsulin(t);
+  else if (t < T.s5) sceneFat(t);
+  else if (t < T.s6) sceneDiabetes(t);
+  else sceneHealthy(t);
+  scene.updateMatrixWorld(true);
+  composer.render();
+  o.drawImage(renderer.domElement, 0, 0, OW, OH);
+  // vignette sinematik
+  const vg = o.createRadialGradient(OW / 2, OH / 2, OH * 0.3, OW / 2, OH / 2, OH * 0.75);
+  vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.55)'); o.fillStyle = vg; o.fillRect(0, 0, OW, OH);
+  drawOverlay(); captions(t);
+  // transisi kilat putih di setiap potongan adegan
+  for (const c of [T.s2, T.s3, T.s4, T.s5, V(35.3), T.s6]) { const d = Math.abs(t - c); if (d < 0.18) { o.fillStyle = `rgba(255,255,255,${0.85 * (1 - d / 0.18)})`; o.fillRect(0, 0, OW, OH); } }
+  if (t < 0.3) { o.fillStyle = `rgba(0,0,0,${1 - t / 0.3})`; o.fillRect(0, 0, OW, OH); }
+  if (t > T.end - 1.2) { o.fillStyle = `rgba(0,0,0,${clamp((t - (T.end - 1.2)) / 1.2)})`; o.fillRect(0, 0, OW, OH); }
+}
+window.frame = (t, q) => { render(t); return out.toDataURL('image/jpeg', q || 0.9); };
+await document.fonts.load('900 80px "Inter Display"');
+window.ready = true;
+</script>
+</body></html>
