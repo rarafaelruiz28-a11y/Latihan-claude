@@ -1,0 +1,397 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>html,body{margin:0;background:#000}canvas{display:block}</style>
+</head><body>
+<canvas id="c" width="1920" height="1080"></canvas>
+<script>
+// Semua waktu dalam detik VIDEO. Voiceover dimulai di detik 2.0 (OFF).
+const W = 1920, H = 1080, OFF = 2.0, DUR = 90;
+const c = document.getElementById('c');
+const g = c.getContext('2d');
+const V = s => s + OFF; // waktu voiceover -> waktu video
+
+const FONT = '"Inter", "DejaVu Sans", sans-serif';
+const C = {
+  sky1: '#0a0f2c', sky2: '#1c2d5e', moon: '#f4f1de', moonShade: '#d9d4b8',
+  road: '#2b2f3a', roadLine: '#f2c14e', grass: '#14301f',
+  tree: '#1f6b45', tree2: '#2a8a59', trunk: '#5b3a24',
+  mtnFar: '#22325f', mtnMid: '#1a2a4d', car: '#ff6b3d', carDark: '#c94a24',
+  accent: '#ffd166', blue: '#5ec8ff', red: '#ff4d5e', white: '#ffffff', green: '#7ee081'
+};
+
+// ---------- utilitas ----------
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const easeOut = t => 1 - Math.pow(1 - clamp(t), 3);
+const easeInOut = t => { t = clamp(t); return t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; };
+const popIn = (t, t0, d = 0.45) => { // skala "pop" dengan sedikit overshoot
+  const x = clamp((t - t0) / d); if (x <= 0) return 0;
+  const s = 1.70158 * 1.3; return 1 + (s + 1) * Math.pow(x - 1, 3) + s * Math.pow(x - 1, 2);
+};
+const fadeIn = (t, t0, d = 0.4) => clamp((t - t0) / d);
+const fadeWin = (t, a, b, d = 0.4) => clamp((t - a) / d) * clamp((b - t) / d);
+
+// bintang acak tetap
+let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+const STARS = Array.from({ length: 220 }, () => ({ x: rnd() * W, y: rnd() * H * 0.7, r: rnd() * 1.8 + 0.4, p: rnd() * 6.28 }));
+
+function sky(t, dim = 1) {
+  const gr = g.createLinearGradient(0, 0, 0, H);
+  gr.addColorStop(0, C.sky1); gr.addColorStop(1, C.sky2);
+  g.fillStyle = gr; g.fillRect(0, 0, W, H);
+  for (const s of STARS) {
+    g.globalAlpha = dim * (0.5 + 0.5 * Math.sin(t * 2 + s.p));
+    g.fillStyle = '#fff'; g.beginPath(); g.arc(s.x, s.y, s.r, 0, 7); g.fill();
+  }
+  g.globalAlpha = 1;
+}
+
+function moon(x, y, r, glow = 1) {
+  const gl = g.createRadialGradient(x, y, r * 0.8, x, y, r * 3.2);
+  gl.addColorStop(0, `rgba(255,250,220,${0.35 * glow})`); gl.addColorStop(1, 'rgba(255,250,220,0)');
+  g.fillStyle = gl; g.beginPath(); g.arc(x, y, r * 3.2, 0, 7); g.fill();
+  g.fillStyle = C.moon; g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
+  g.fillStyle = C.moonShade;
+  [[-0.3, -0.25, 0.2], [0.35, 0.1, 0.14], [-0.05, 0.4, 0.12], [0.2, -0.4, 0.09]].forEach(([dx, dy, rr]) => {
+    g.beginPath(); g.arc(x + dx * r, y + dy * r, rr * r, 0, 7); g.fill();
+  });
+}
+
+function text(str, x, y, size, color = C.white, align = 'center', weight = 800, alpha = 1, scale = 1) {
+  if (alpha <= 0 || scale <= 0) return;
+  g.save(); g.globalAlpha = alpha; g.translate(x, y); g.scale(scale, scale);
+  g.font = `${weight} ${size}px ${FONT}`; g.textAlign = align; g.textBaseline = 'middle';
+  g.lineJoin = 'round'; g.lineWidth = size * 0.16; g.strokeStyle = 'rgba(5,8,25,0.85)';
+  g.strokeText(str, 0, 0); g.fillStyle = color; g.fillText(str, 0, 0);
+  g.restore();
+}
+
+function label(str, x, y, size, bg, fg = '#10132a', alpha = 1, scale = 1) {
+  if (alpha <= 0 || scale <= 0) return;
+  g.save(); g.globalAlpha = alpha; g.translate(x, y); g.scale(scale, scale);
+  g.font = `800 ${size}px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+  const w = g.measureText(str).width + size * 1.1, h = size * 1.6;
+  g.fillStyle = bg; roundRect(-w / 2, -h / 2, w, h, h / 2); g.fill();
+  g.fillStyle = fg; g.fillText(str, 0, 2);
+  g.restore();
+}
+
+function roundRect(x, y, w, h, r) {
+  g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
+}
+
+function arrow(x1, y1, x2, y2, color, w = 8, alpha = 1) {
+  if (alpha <= 0) return;
+  g.save(); g.globalAlpha = alpha; g.strokeStyle = color; g.fillStyle = color; g.lineWidth = w; g.lineCap = 'round';
+  g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke();
+  const a = Math.atan2(y2 - y1, x2 - x1), h = w * 3.2;
+  g.beginPath(); g.moveTo(x2 + Math.cos(a) * h * 0.4, y2 + Math.sin(a) * h * 0.4);
+  g.lineTo(x2 - Math.cos(a - 0.5) * h, y2 - Math.sin(a - 0.5) * h);
+  g.lineTo(x2 - Math.cos(a + 0.5) * h, y2 - Math.sin(a + 0.5) * h); g.closePath(); g.fill();
+  g.restore();
+}
+
+function mountains(offset, baseY, color, amp, period, seedK) {
+  g.fillStyle = color; g.beginPath(); g.moveTo(0, H);
+  for (let x = 0; x <= W + 10; x += 10) {
+    const u = (x + offset) / period;
+    const y = baseY - amp * (0.55 + 0.45 * Math.sin(u * 2.1 + seedK)) * (0.6 + 0.4 * Math.sin(u * 0.73 + seedK * 2));
+    g.lineTo(x, y);
+  }
+  g.lineTo(W, H); g.closePath(); g.fill();
+}
+
+function tree(x, baseY, s = 1) {
+  g.fillStyle = C.trunk; g.fillRect(x - 10 * s, baseY - 90 * s, 20 * s, 90 * s);
+  g.fillStyle = C.tree;
+  g.beginPath(); g.arc(x, baseY - 150 * s, 70 * s, 0, 7); g.fill();
+  g.fillStyle = C.tree2;
+  g.beginPath(); g.arc(x - 30 * s, baseY - 180 * s, 45 * s, 0, 7); g.fill();
+  g.beginPath(); g.arc(x + 35 * s, baseY - 135 * s, 45 * s, 0, 7); g.fill();
+}
+
+function pole(x, baseY) {
+  g.fillStyle = '#3d3a46'; g.fillRect(x - 7, baseY - 330, 14, 330);
+  g.fillRect(x - 50, baseY - 315, 100, 10);
+}
+
+function car(x, y, t, s = 1) {
+  g.save(); g.translate(x, y); g.scale(s, s);
+  // bayangan
+  g.fillStyle = 'rgba(0,0,0,0.35)'; g.beginPath(); g.ellipse(0, 8, 190, 16, 0, 0, 7); g.fill();
+  // badan
+  g.fillStyle = C.car; roundRect(-190, -95, 380, 80, 28); g.fill();
+  g.beginPath(); g.moveTo(-110, -90); g.lineTo(-60, -165); g.lineTo(80, -165); g.lineTo(135, -90); g.closePath(); g.fill();
+  // jendela
+  g.fillStyle = '#9fd8ff';
+  g.beginPath(); g.moveTo(-90, -95); g.lineTo(-52, -150); g.lineTo(5, -150); g.lineTo(5, -95); g.closePath(); g.fill();
+  g.beginPath(); g.moveTo(20, -95); g.lineTo(20, -150); g.lineTo(72, -150); g.lineTo(112, -95); g.closePath(); g.fill();
+  // anak melihat ke luar jendela (siluet kepala)
+  g.fillStyle = '#2a1d16'; g.beginPath(); g.arc(-30, -118, 20, 0, 7); g.fill();
+  g.fillStyle = '#f0c49a'; g.beginPath(); g.arc(-24, -114, 15, 0, 7); g.fill();
+  // lampu
+  g.fillStyle = '#fff2a8'; roundRect(170, -80, 22, 18, 6); g.fill();
+  g.fillStyle = C.carDark; g.fillRect(-190, -40, 380, 8);
+  // roda
+  [-110, 115].forEach(wx => {
+    g.save(); g.translate(wx, -12);
+    g.fillStyle = '#16161c'; g.beginPath(); g.arc(0, 0, 40, 0, 7); g.fill();
+    g.fillStyle = '#b8bcc8'; g.beginPath(); g.arc(0, 0, 18, 0, 7); g.fill();
+    g.rotate(t * 14); g.strokeStyle = '#555a66'; g.lineWidth = 5;
+    for (let k = 0; k < 3; k++) { g.rotate(Math.PI / 3); g.beginPath(); g.moveTo(-16, 0); g.lineTo(16, 0); g.stroke(); }
+    g.restore();
+  });
+  g.restore();
+}
+
+// ---------- adegan jalan malam (tampak samping) ----------
+function roadScene(t, o = {}) {
+  const near = o.near ?? 900, mid = o.mid ?? 120, far = o.far ?? 25;
+  sky(t);
+  moon(o.moonX ?? 1500, o.moonY ?? 210, 78);
+  mountains(t * far, 640, C.mtnFar, 260, 380, 1.3);
+  mountains(t * mid, 740, C.mtnMid, 150, 220, 4.2);
+  g.fillStyle = C.grass; g.fillRect(0, 760, W, 60);
+  // jalan
+  g.fillStyle = C.road; g.fillRect(0, 820, W, 260);
+  g.fillStyle = C.roadLine;
+  const dash = 260, off = (t * near * 1.2) % dash;
+  for (let x = -off; x < W; x += dash) g.fillRect(x, 975, 130, 12);
+  // tiang & pohon dekat (di belakang mobil, pinggir jalan)
+  const span = W + 600;
+  for (let i = 0; i < 6; i++) {
+    let x = ((i * 380 - t * near) % span + span) % span - 300;
+    if (i % 3 === 2) pole(x, 815); else tree(x, 815, 1.1);
+  }
+  car(o.carX ?? 820, 935, t, 1.05);
+}
+
+// ---------- adegan ruang angkasa ----------
+function spaceScene(t, t0) {
+  g.fillStyle = '#050816'; g.fillRect(0, 0, W, H);
+  for (const s of STARS) { g.globalAlpha = 0.7; g.fillStyle = '#fff'; g.beginPath(); g.arc(s.x, s.y * 1.4, s.r, 0, 7); g.fill(); }
+  g.globalAlpha = 1;
+  const ex = 230, mx = 1690, cy = 560;
+  // Bumi
+  const ap = fadeIn(t, t0, 0.6);
+  g.globalAlpha = ap;
+  g.fillStyle = '#2e7dd7'; g.beginPath(); g.arc(ex, cy, 110, 0, 7); g.fill();
+  g.fillStyle = '#4caf6a';
+  g.beginPath(); g.ellipse(ex - 30, cy - 30, 45, 30, 0.6, 0, 7); g.fill();
+  g.beginPath(); g.ellipse(ex + 40, cy + 35, 35, 22, -0.4, 0, 7); g.fill();
+  text('Bumi', ex, cy + 165, 44, C.white, 'center', 700, ap);
+  // Bulan
+  const am = fadeIn(t, t0 + 0.5, 0.6);
+  g.globalAlpha = am; moon(mx, cy, 30, 0.6); g.globalAlpha = 1;
+  text('Bulan', mx, cy + 90, 44, C.white, 'center', 700, am);
+  // garis jarak
+  const lp = easeInOut((t - V(32.5)) / 1.6);
+  if (lp > 0) {
+    g.strokeStyle = C.accent; g.lineWidth = 6; g.setLineDash([22, 14]);
+    g.beginPath(); g.moveTo(ex + 125, cy); g.lineTo(lerp(ex + 125, mx - 45, lp), cy); g.stroke(); g.setLineDash([]);
+  }
+  const s1 = popIn(t, V(34.1));
+  label('± 384.000 km', (ex + mx) / 2, cy - 90, 64, C.accent, '#10132a', 1, s1);
+  // perbandingan 10 km
+  const a2 = fadeIn(t, V(38.6), 0.5);
+  if (a2 > 0) {
+    // titik kecil di permukaan bumi + kaca pembesar
+    const px = ex + 108, py = cy - 22;
+    g.globalAlpha = a2;
+    g.strokeStyle = C.red; g.lineWidth = 5; g.beginPath(); g.arc(px, py, 26, 0, 7); g.stroke();
+    g.beginPath(); g.moveTo(px + 18, py - 18); g.lineTo(540, 300); g.stroke();
+    g.fillStyle = 'rgba(16,19,42,0.92)'; roundRect(540, 200, 700, 200, 26); g.fill();
+    g.strokeStyle = C.red; roundRect(540, 200, 700, 200, 26); g.stroke();
+    g.globalAlpha = 1;
+    car(640, 340, t, 0.33 * a2);
+    text('Mobil melaju 10 km', 990, 270, 40, C.white, 'center', 800, a2);
+    text('di gambar ini: 0,04 piksel!', 990, 335, 34, C.accent, 'center', 700, a2);
+  }
+  const a3 = fadeIn(t, V(40.4), 0.5);
+  text('Sangat, sangat kecil dibanding jarak ke Bulan', W / 2, 900, 52, C.white, 'center', 800, a3);
+}
+
+// ---------- diagram tampak atas: arah pandang ----------
+function topDown(t) {
+  g.fillStyle = '#0e1430'; g.fillRect(0, 0, W, H);
+  // grid halus
+  g.strokeStyle = 'rgba(255,255,255,0.04)'; g.lineWidth = 2;
+  for (let x = 0; x < W; x += 80) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke(); }
+  for (let y = 0; y < H; y += 80) { g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
+  text('Dilihat dari atas', 140, 60, 34, 'rgba(255,255,255,0.6)', 'left', 600);
+  // jalan
+  g.fillStyle = C.road; g.fillRect(0, 820, W, 150);
+  g.fillStyle = C.roadLine; for (let x = 0; x < W; x += 160) g.fillRect(x, 890, 80, 8);
+  // pohon dekat jalan (tampak atas)
+  const tx = 960, ty = 700;
+  g.fillStyle = C.tree; g.beginPath(); g.arc(tx, ty, 46, 0, 7); g.fill();
+  g.fillStyle = C.tree2; g.beginPath(); g.arc(tx - 12, ty - 10, 26, 0, 7); g.fill();
+  // posisi mobil bergerak
+  const t0 = V(43.4), t1 = V(61.5);
+  const p = clamp((t - t0) / (t1 - t0));
+  const cx = lerp(260, 1660, easeInOut(clamp(p * 1.15)));
+  const cy = 895;
+  // arah Bulan: sudut tetap (garis sejajar)
+  const ang = -Math.PI / 2 - 0.3;
+  const L = 760;
+  // jejak garis sebelumnya (sejajar)
+  const ghosts = 5;
+  for (let k = 0; k < ghosts; k++) {
+    const gx = lerp(260, cx, k / ghosts);
+    if (cx - gx < 20) continue;
+    g.strokeStyle = 'rgba(94,200,255,0.25)'; g.lineWidth = 4; g.setLineDash([16, 12]);
+    g.beginPath(); g.moveTo(gx, cy); g.lineTo(gx + Math.cos(ang) * L, cy + Math.sin(ang) * L); g.stroke();
+    g.setLineDash([]);
+    g.strokeStyle = 'rgba(255,209,102,0.25)'; g.lineWidth = 4;
+    g.beginPath(); g.moveTo(gx, cy); g.lineTo(tx, ty); g.stroke();
+  }
+  // garis aktif
+  arrow(cx, cy, cx + Math.cos(ang) * L, cy + Math.sin(ang) * L, C.blue, 8);
+  arrow(cx, cy, tx, ty, C.accent, 7);
+  // mobil tampak atas
+  g.save(); g.translate(cx, cy);
+  g.fillStyle = C.car; roundRect(-70, -36, 140, 72, 18); g.fill();
+  g.fillStyle = '#9fd8ff'; roundRect(10, -28, 34, 56, 8); g.fill(); roundRect(-46, -28, 26, 56, 8); g.fill();
+  g.restore();
+  // label
+  const aL = fadeIn(t, V(43.6));
+  label('Arah ke Bulan: selalu sama', 1450, 120, 40, C.blue, '#06122a', aL);
+  text('Bulan ada jauh sekali di arah panah biru', 1450, 190, 30, 'rgba(255,255,255,0.75)', 'center', 600, aL);
+  const aT = fadeIn(t, V(48.5));
+  label('Arah ke pohon: berubah terus', 560, 120, 40, C.accent, '#2a1d00', aT);
+  // gelembung pikiran
+  const sB = popIn(t, V(54.1));
+  if (sB > 0) {
+    g.save(); g.translate(560, 380); g.scale(sB, sB);
+    g.fillStyle = '#ffffff';
+    g.beginPath(); g.ellipse(0, 0, 330, 120, 0, 0, 7); g.fill();
+    g.beginPath(); g.arc(-150, 150, 26, 0, 7); g.fill();
+    g.beginPath(); g.arc(-190, 200, 15, 0, 7); g.fill();
+    g.fillStyle = '#10132a'; g.font = `800 50px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('"Bulan ikut aku?!"', 0, 4);
+    g.restore();
+  }
+  // silang & "TIDAK!"
+  const sX = popIn(t, V(58.4));
+  if (sX > 0) {
+    g.save(); g.translate(560, 380); g.scale(sX, sX);
+    g.strokeStyle = C.red; g.lineWidth = 26; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(-250, -100); g.lineTo(250, 100); g.moveTo(250, -100); g.lineTo(-250, 100); g.stroke();
+    g.restore();
+    label('Padahal Bulan tidak mengejar kita!', W / 2, 560, 54, C.red, '#ffffff', clamp(sX));
+  }
+}
+
+// ---------- uji jari (paralaks) ----------
+function fingerScene(t) {
+  // pemandangan dari mata kiri atau kanan
+  const ts = [V(64.85), V(66.56), V(68.0), V(68.6), V(69.2), V(69.8), V(70.4)];
+  let state = 0; // 0 = kedua mata terbuka, 1 = mata kiri tutup (lihat dgn kanan), 2 = mata kanan tutup
+  for (let i = 0; i < ts.length; i++) if (t >= ts[i]) state = (i % 2 === 0) ? 1 : 2;
+  if (t >= V(70.9)) state = 0;
+  sky(t, 0.8);
+  // latar jauh: gunung + rumah (bergeser sedikit)
+  const bgShift = state === 1 ? -8 : state === 2 ? 8 : 0;
+  mountains(300 + bgShift, 720, C.mtnFar, 280, 360, 2.0);
+  g.fillStyle = C.grass; g.fillRect(0, 720, W, H - 720);
+  // rumah jauh
+  const hx = 1180 + bgShift, hy = 700;
+  g.fillStyle = '#e0a96d'; g.fillRect(hx - 60, hy - 70, 120, 70);
+  g.fillStyle = '#a4453b'; g.beginPath(); g.moveTo(hx - 75, hy - 70); g.lineTo(hx, hy - 125); g.lineTo(hx + 75, hy - 70); g.fill();
+  g.fillStyle = '#ffe28a'; g.fillRect(hx - 15, hy - 50, 30, 30);
+  moon(1500 + bgShift * 0.2, 220, 60);
+  // jari (dekat, melompat jauh)
+  const fShift = state === 1 ? -230 : state === 2 ? 230 : 0;
+  const fx = 960 + fShift;
+  g.fillStyle = '#f0c49a';
+  roundRect(fx - 55, 420, 110, 720, 55); g.fill();
+  g.fillStyle = '#f7dcc2'; roundRect(fx - 34, 445, 68, 80, 26); g.fill(); // kuku
+  g.fillStyle = '#e3ae80'; g.fillRect(fx - 55, 640, 110, 6); g.fillRect(fx - 55, 820, 110, 6);
+  // indikator mata
+  const ex = 160, ey = 140;
+  g.fillStyle = 'rgba(16,19,42,0.85)'; roundRect(ex - 110, ey - 80, 330, 160, 30); g.fill();
+  [[ex, 'L'], [ex + 110, 'R']].forEach(([x, side]) => {
+    const closed = (state === 1 && side === 'L') || (state === 2 && side === 'R');
+    g.fillStyle = '#fff'; g.strokeStyle = '#fff'; g.lineWidth = 7;
+    if (closed) { g.beginPath(); g.arc(x, ey - 10, 36, 0.2, Math.PI - 0.2); g.stroke(); }
+    else { g.beginPath(); g.ellipse(x, ey, 40, 26, 0, 0, 7); g.fill(); g.fillStyle = '#10132a'; g.beginPath(); g.arc(x, ey, 14, 0, 7); g.fill(); }
+  });
+  text(state === 1 ? 'Mata kiri ditutup' : state === 2 ? 'Mata kanan ditutup' : 'Coba sendiri!', ex + 55, ey + 105, 30, C.white, 'center', 700);
+  const aJ = fadeIn(t, V(68.6));
+  label('Jari (dekat): melompat-lompat!', 960, 330, 42, C.accent, '#2a1d00', aJ);
+  const aR = fadeIn(t, V(71.3));
+  label('Benda jauh: hampir diam', 1180, 580, 38, C.blue, '#06122a', aR);
+  const sP = popIn(t, V(74.5));
+  if (sP > 0) { g.fillStyle = `rgba(5,8,25,${0.55 * clamp(sP)})`; g.fillRect(0, 0, W, H); text('PARALAKS!', W / 2, H / 2, 170, C.accent, 'center', 900, 1, sP); }
+}
+
+// ---------- render utama ----------
+function draw(t) {
+  g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1;
+  if (t < V(13.3)) {
+    // A: judul + jalan malam
+    roadScene(t);
+    const a = fadeWin(t, -1, 2.6, 0.5);
+    if (a > 0) {
+      g.fillStyle = `rgba(5,8,25,${0.55 * a})`; g.fillRect(0, 0, W, H);
+      text('Kenapa Bulan Terlihat', W / 2, 400, 110, C.white, 'center', 900, a, lerp(0.92, 1, easeOut(t / 1)));
+      text('Mengikuti Kita?', W / 2, 530, 110, C.accent, 'center', 900, a, lerp(0.92, 1, easeOut(t / 1)));
+    }
+    label('Pohon & tiang: lewat cepat', 520, 560, 40, C.accent, '#2a1d00', fadeWin(t, V(7.5), V(13.3)));
+    label('Bulan: tetap di situ', 1500, 380, 40, C.blue, '#06122a', fadeWin(t, V(10.7), V(13.3)));
+    text('Kenapa, ya?', W / 2, 140, 80, C.white, 'center', 900, 1, popIn(t, V(12.2)));
+  } else if (t < V(16.75)) {
+    // B: JARAK
+    sky(t); moon(1500, 260, 70);
+    text('Rahasianya ada pada satu hal:', W / 2, 400, 64, C.white, 'center', 700, fadeIn(t, V(13.4)));
+    text('JARAK', W / 2, 580, 240, C.accent, 'center', 900, 1, popIn(t, V(16.05), 0.5));
+  } else if (t < V(31.9)) {
+    // C: paralaks di jalan, diperlambat
+    const tt = t;
+    roadScene(tt, { near: 520, mid: 90, far: 14 });
+    const aN = fadeIn(t, V(17.9));
+    if (aN > 0) {
+      label('DEKAT → bergeser cepat', 470, 470, 42, C.accent, '#2a1d00', aN);
+      arrow(640, 540, 300, 540, C.accent, 10, aN);
+    }
+    const aM = fadeIn(t, V(26.9));
+    if (aM > 0) {
+      label('JAUH → bergeser pelan', 900, 300, 42, '#b9c6ff', '#10132a', aM);
+      arrow(1020, 360, 900, 360, '#b9c6ff', 8, aM);
+    }
+    const aB = fadeIn(t, V(28.9));
+    label('Sangat jauh → seperti diam', 1500, 360, 38, C.blue, '#06122a', aB);
+    const sP = popIn(t, V(30.85));
+    if (sP > 0) label('Efek ini = PARALAKS', W / 2, 140, 72, C.white, '#10132a', 1, sP);
+  } else if (t < V(43.36)) {
+    spaceScene(t, V(31.9));
+  } else if (t < V(61.62)) {
+    topDown(t);
+  } else if (t < V(75.45)) {
+    fingerScene(t);
+  } else {
+    // G: penutup
+    roadScene(t, { near: 600 });
+    const a1 = fadeIn(t, V(75.6));
+    g.fillStyle = `rgba(5,8,25,${0.5 * a1})`; g.fillRect(0, 0, W, H);
+    text('Bulan tidak mengikutimu.', W / 2, 360, 90, C.white, 'center', 900, a1);
+    text('Ia hanya sangat, sangat jauh.', W / 2, 480, 76, C.accent, 'center', 900, fadeIn(t, V(78.1)));
+    text('Sampai jumpa! 👋', W / 2, 640, 70, C.white, 'center', 800, 1, popIn(t, V(80.3)));
+    // fade out ke hitam
+    const fo = clamp((t - 88.2) / 1.8);
+    if (fo > 0) { g.fillStyle = `rgba(0,0,0,${fo})`; g.fillRect(0, 0, W, H); }
+  }
+  // transisi: kedipan gelap singkat di batas adegan
+  const cuts = [V(13.3), V(16.75), V(31.9), V(43.36), V(61.62), V(75.45)];
+  for (const cT of cuts) {
+    const d = Math.abs(t - cT);
+    if (d < 0.25) { g.fillStyle = `rgba(5,8,25,${1 - d / 0.25})`; g.fillRect(0, 0, W, H); }
+  }
+  // fade in awal
+  if (t < 0.5) { g.fillStyle = `rgba(0,0,0,${1 - t / 0.5})`; g.fillRect(0, 0, W, H); }
+}
+window.draw = draw;
+window.frame = (t, q) => { draw(t); return c.toDataURL('image/jpeg', q || 0.92); };
+</script>
+</body></html>
